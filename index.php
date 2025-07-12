@@ -8,14 +8,9 @@ $config = [
     'max_upload_size' => 50 * 1024 * 1024, // 50MB
     'show_hidden' => false,
     // Password hash for "P@ssw0rd123234!@#@#$" - HIDDEN FROM VIEW
-    'password_hash' => '$2y$10$YourHashWillBeGeneratedHere',
+    'password_hash' => '$2y$10$Xx1c0aYemh5Xc4oV16j6SOJabT5Z3DBY.pm5CiORPGnk62Jof8NGq',
     'allow_root_access' => true // Allow access to parent directories
 ];
-
-// Generate correct hash if needed
-if ($config['password_hash'] === '$2y$10$YourHashWillBeGeneratedHere') {
-    $config['password_hash'] = password_hash('P@ssw0rd123234!@#@#$', PASSWORD_DEFAULT);
-}
 
 // Include all functions
 require_once 'includes/functions.php';
