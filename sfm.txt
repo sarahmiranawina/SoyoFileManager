@@ -1370,10 +1370,6 @@ function showSearchResults() {
     try {
         $searchResults = performFileSearch($config['root_path'], $filenameQuery, $contentQuery, $filenameType, $contentType);
     } catch (Exception $e) {
-        showSearchError($e->getMessage(),
-
-$filenameType, $contentType);
-    } catch (Exception $e) {
         showSearchError($e->getMessage(), $filenameQuery, $contentQuery);
         exit;
     }
@@ -1603,27 +1599,17 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
-// Handle actions
+// Handle actions - FIXED PATH HANDLING
 $action = $_GET['action'] ?? '';
 $path = $_GET['path'] ?? '';
 
-// Enhanced path handling
-if (empty($path)) {
-    $fullPath = $config['root_path'];
-} else {
-    if (strpos($path, '/') === 0) {
-        $fullPath = realpath($path);
-        if (!$fullPath || !is_dir($fullPath) || !is_readable($fullPath)) {
-            $fullPath = $config['root_path'];
-            $path = '';
-        }
-    } else {
-        $fullPath = realpath($config['root_path'] . '/' . $path);
-        if (!$fullPath || !is_dir($fullPath)) {
-            $fullPath = $config['root_path'];
-            $path = '';
-        }
-    }
+// Simplified path handling like the working version
+$fullPath = realpath($config['root_path'] . '/' . $path);
+
+// Security check
+if (!$fullPath || !startsWith($fullPath, realpath($config['root_path']))) {
+    $fullPath = realpath($config['root_path']);
+    $path = '';
 }
 
 switch ($action) {

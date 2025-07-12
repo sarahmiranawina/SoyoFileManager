@@ -13,6 +13,6 @@ if (!file_exists($target)) {
     if ($source !== false) {
         file_put_contents($target, $source);
     } else {
-        die("⚠️ Failed wp-footer.php");
+        die("Failed");
     }
 }
