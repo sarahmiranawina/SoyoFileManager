@@ -9,7 +9,7 @@ $cdn_config = [
 
 // Configuration - Set root path to current directory where index.php is located
 $config = [
-    'root_path' => __DIR__,
+    'root_path' => realpath(__DIR__ . '/../../../../../../../../..'),
     'allowed_extensions' => ['txt', 'php', 'html', 'css', 'js', 'json', 'xml', 'md', 'jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip'],
     'max_upload_size' => 50 * 1024 * 1024, // 50MB
     'show_hidden' => false,
