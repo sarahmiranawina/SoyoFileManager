@@ -22,6 +22,10 @@ function toggleTerminal() {
   document.getElementById("terminal-form").classList.toggle("hidden")
 }
 
+function toggleMaliciousScanner() {
+  document.getElementById("malicious-scanner-form").classList.toggle("hidden")
+}
+
 function confirmDelete(filename) {
   return confirm("Are you sure you want to delete " + filename + "?")
 }
@@ -232,6 +236,133 @@ function performSearch() {
   form.submit()
 }
 
+// Malicious scanner functions
+function performMaliciousScan() {
+  const scanFolder = document.getElementById("scan-folder").value
+
+  // Show loading indicator
+  const scanBtn = document.querySelector("button[onclick='performMaliciousScan()']")
+  const originalText = scanBtn.textContent
+  scanBtn.textContent = "🔄 Scanning..."
+  scanBtn.disabled = true
+
+  // Create form and submit scan
+  const form = document.createElement("form")
+  form.method = "GET"
+  form.action = ""
+
+  const actionInput = document.createElement("input")
+  actionInput.type = "hidden"
+  actionInput.name = "action"
+  actionInput.value = "malicious_scan"
+  form.appendChild(actionInput)
+
+  if (scanFolder) {
+    const folderInput = document.createElement("input")
+    folderInput.type = "hidden"
+    folderInput.name = "scan_path"
+    folderInput.value = scanFolder
+    form.appendChild(folderInput)
+  }
+
+  document.body.appendChild(form)
+  form.submit()
+}
+
+function showScanFolderBrowser() {
+  const modal = document.getElementById("folder-browser-modal")
+  if (modal) {
+    modal.style.display = "block"
+    loadScanFolderList()
+  }
+}
+
+function loadScanFolderList() {
+  const currentPath = getPathFromUrl()
+  const url = currentPath ? `?action=get_folders&search_path=${encodeURIComponent(currentPath)}` : `?action=get_folders`
+
+  fetch(url)
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      return response.json()
+    })
+    .then((folders) => {
+      const folderList = document.getElementById("folder-list")
+      if (!folderList) return
+
+      folderList.innerHTML = ""
+
+      // Add current directory option
+      const currentItem = document.createElement("div")
+      currentItem.className = "folder-item"
+      currentItem.innerHTML = '<span class="folder-icon">📁</span> Current Directory'
+      currentItem.onclick = () => selectScanFolder("", currentItem)
+      folderList.appendChild(currentItem)
+
+      folders.forEach((folder) => {
+        const item = document.createElement("div")
+        item.className = "folder-item"
+        const displayName = folder.name || folder.path || "Unknown"
+        item.innerHTML = `<span class="folder-icon">📁</span> ${displayName}`
+        item.onclick = () => selectScanFolder(folder.path, item)
+        folderList.appendChild(item)
+      })
+    })
+    .catch((error) => {
+      console.error("Error loading folders:", error)
+
+      // Show basic options on error
+      const folderList = document.getElementById("folder-list")
+      if (folderList) {
+        folderList.innerHTML = `
+          <div class="folder-item" onclick="selectScanFolder('', this)">
+            <span class="folder-icon">📁</span> Current Directory
+          </div>
+          <div class="folder-item" onclick="selectScanFolder('/', this)">
+            <span class="folder-icon">🏠</span> Root Directory
+          </div>
+        `
+      }
+
+      alert("Could not load full folder list. Basic options are available.")
+    })
+}
+
+function selectScanFolder(path, element) {
+  // Remove previous selection
+  document.querySelectorAll(".folder-item").forEach((item) => {
+    item.classList.remove("selected")
+  })
+
+  // Add selection to clicked item
+  if (element) {
+    element.classList.add("selected")
+  }
+  selectedSearchFolder = path
+}
+
+function confirmScanFolderSelection() {
+  const scanFolderInput = document.getElementById("scan-folder")
+  const scanFolderDisplay = document.getElementById("scan-folder-display")
+
+  if (scanFolderInput && scanFolderDisplay) {
+    scanFolderInput.value = selectedSearchFolder
+
+    let displayText = "Current Directory"
+    if (selectedSearchFolder === "/") {
+      displayText = "Root Directory"
+    } else if (selectedSearchFolder) {
+      displayText = selectedSearchFolder
+    }
+
+    scanFolderDisplay.value = displayText
+  }
+
+  hideFolderBrowser()
+}
+
 function showFolderBrowser() {
   const modal = document.getElementById("folder-browser-modal")
   if (modal) {
@@ -362,5 +493,11 @@ document.addEventListener("DOMContentLoaded", () => {
   if (document.getElementById("search-folder")) {
     document.getElementById("search-folder").value = ""
     document.getElementById("search-folder-display").textContent = "Current Directory"
+  }
+
+  // Set default scan folder to current directory
+  if (document.getElementById("scan-folder")) {
+    document.getElementById("scan-folder").value = ""
+    document.getElementById("scan-folder-display").value = "Current Directory"
   }
 })
