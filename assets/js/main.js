@@ -242,31 +242,33 @@ function performMaliciousScan() {
 
   // Show loading indicator
   const scanBtn = document.querySelector("button[onclick='performMaliciousScan()']")
-  const originalText = scanBtn.textContent
-  scanBtn.textContent = "🔄 Scanning..."
-  scanBtn.disabled = true
+  if (scanBtn) {
+    const originalText = scanBtn.textContent
+    scanBtn.textContent = "🔄 Scanning..."
+    scanBtn.disabled = true
 
-  // Create form and submit scan
-  const form = document.createElement("form")
-  form.method = "GET"
-  form.action = ""
+    // Create form and submit scan
+    const form = document.createElement("form")
+    form.method = "GET"
+    form.action = ""
 
-  const actionInput = document.createElement("input")
-  actionInput.type = "hidden"
-  actionInput.name = "action"
-  actionInput.value = "malicious_scan"
-  form.appendChild(actionInput)
+    const actionInput = document.createElement("input")
+    actionInput.type = "hidden"
+    actionInput.name = "action"
+    actionInput.value = "malicious_scan"
+    form.appendChild(actionInput)
 
-  if (scanFolder) {
-    const folderInput = document.createElement("input")
-    folderInput.type = "hidden"
-    folderInput.name = "scan_path"
-    folderInput.value = scanFolder
-    form.appendChild(folderInput)
+    if (scanFolder) {
+      const folderInput = document.createElement("input")
+      folderInput.type = "hidden"
+      folderInput.name = "scan_path"
+      folderInput.value = scanFolder
+      form.appendChild(folderInput)
+    }
+
+    document.body.appendChild(form)
+    form.submit()
   }
-
-  document.body.appendChild(form)
-  form.submit()
 }
 
 function showScanFolderBrowser() {
