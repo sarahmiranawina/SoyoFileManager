@@ -96,14 +96,6 @@ body {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
-.toolbar button.search {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-}
-
-.toolbar button.search:hover {
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
-}
-
 /* Checkbox Styling - CONSISTENT */
 input[type="checkbox"] {
   appearance: none;
