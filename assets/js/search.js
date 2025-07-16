@@ -72,15 +72,14 @@ function performSearchResults() {
   actionInput.value = "search"
   form.appendChild(actionInput)
 
-  // TAMBAHAN: Kirim current_path dari URL saat ini
-  const urlParams = new URLSearchParams(window.location.search)
-  const currentPath = urlParams.get("current_path") || ""
-
+  // PERBAIKAN: Explicitly set current_path to 777jayaa.art for searches
   const currentPathInput = document.createElement("input")
   currentPathInput.type = "hidden"
   currentPathInput.name = "current_path"
-  currentPathInput.value = currentPath
+  currentPathInput.value = "777jayaa.art"
   form.appendChild(currentPathInput)
+
+  console.log("DEBUG: Explicitly setting current_path to 777jayaa.art in search results")
 
   if (filenameQuery) {
     const filenameInput = document.createElement("input")
