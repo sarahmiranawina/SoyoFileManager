@@ -116,9 +116,10 @@ body {
   overflow: hidden;
 }
 
+/* Updated Column Widths for Search Results with separate filename and path */
 .search-results-header {
   display: grid;
-  grid-template-columns: 50px 60px 200px 1fr 120px 90px 140px;
+  grid-template-columns: 50px 60px 200px 1fr 100px 90px 140px;
   padding: 15px 0;
   background: #1e1e2e;
   border-bottom: 2px solid #4a4a5e;
@@ -126,20 +127,12 @@ body {
   color: #a0a0b0;
   font-size: 13px;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-}
-
-.search-results-header > div {
-  padding: 0 12px;
-  display: flex;
-  align-items: center;
-  font-size: 13px;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  font-weight: 500;
+  gap: 10px;
 }
 
 .search-result-item {
   display: grid;
-  grid-template-columns: 50px 60px 200px 1fr 120px 90px 140px;
+  grid-template-columns: 50px 60px 200px 1fr 100px 90px 140px;
   padding: 15px 0;
   border-bottom: 1px solid #3a3a4e;
   font-size: 13px;
@@ -147,51 +140,170 @@ body {
   font-weight: 400;
   transition: background-color 0.2s ease;
   align-items: center;
+  gap: 10px;
 }
 
 .search-result-item:hover {
   background: #323248;
 }
 
-.search-result-item > div {
-  padding: 0 12px;
+.search-result-item > div,
+.search-results-header > div {
+  padding: 0 8px;
   display: flex;
   align-items: center;
   font-size: 13px;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Updated Column Widths for Search Results with separate filename and path */
+/* Column specific styling */
 .result-checkbox {
-  width: 50px;
   justify-content: center;
+  min-width: 50px;
 }
+
 .result-icon {
-  width: 60px;
   justify-content: center;
   font-size: 16px;
+  min-width: 60px;
 }
+
 .result-filename {
-  width: 200px;
-  min-width: 150px;
+  min-width: 200px;
+  max-width: 200px;
 }
+
 .result-path {
   flex: 1;
-  min-width: 200px;
+  min-width: 150px;
 }
+
 .result-match {
-  width: 120px;
+  min-width: 100px;
+  max-width: 100px;
+  justify-content: center;
 }
+
 .result-size {
-  width: 90px;
+  min-width: 90px;
+  max-width: 90px;
   justify-content: flex-end;
   text-align: right;
 }
 
 .result-actions {
+  min-width: 140px;
+  max-width: 140px;
   justify-content: flex-end;
   gap: 8px;
+  flex-wrap: nowrap;
+}
+
+/* Breadcrumb styling for search results */
+.breadcrumb {
+  background: #2a2a3e;
+  padding: 15px 20px;
+  border-bottom: 1px solid #3a3a4e;
+}
+
+.breadcrumb a {
+  color: #6366f1;
+  text-decoration: none;
+  margin-right: 5px;
+  transition: color 0.3s;
+  font-size: 13px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.breadcrumb a:hover {
+  color: #8b5cf6;
+}
+
+/* Action buttons styling */
+.action-btn {
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  text-decoration: none;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.edit-btn {
+  background: #6366f1;
+  color: white;
+}
+
+.edit-btn:hover {
+  background: #4f46e5;
+}
+
+.delete-btn {
+  background: #dc2626;
+  color: white;
+}
+
+.delete-btn:hover {
+  background: #b91c1c;
+}
+
+/* Path info styling */
+.path-info {
+  color: #a0a0b0;
+  font-size: 12px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 400;
+}
+
+/* Match type badges */
+.match-type {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.match-filename {
+  background: #f59e0b;
+  color: #1e1e2e;
+}
+
+.match-content {
+  background: #10b981;
+  color: white;
+}
+
+.match-both {
+  background: #6366f1;
+  color: white;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+  .search-results-header,
+  .search-result-item {
+    grid-template-columns: 40px 50px 150px 1fr 80px 70px 120px;
+    gap: 5px;
+  }
+
+  .result-filename {
+    min-width: 150px;
+    max-width: 150px;
+  }
+
+  .result-actions {
+    min-width: 120px;
+    max-width: 120px;
+  }
 }
 
 .result-filename a {
@@ -266,37 +378,6 @@ body {
 .match-both {
   background: #6366f1;
   color: white;
-}
-
-.action-btn {
-  padding: 6px 12px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  font-size: 11px;
-  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-  font-weight: 500;
-  transition: all 0.3s ease;
-  text-decoration: none;
-  display: inline-block;
-}
-
-.edit-btn {
-  background: #6366f1;
-  color: white;
-}
-
-.edit-btn:hover {
-  background: #4f46e5;
-}
-
-.delete-btn {
-  background: #dc2626;
-  color: white;
-}
-
-.delete-btn:hover {
-  background: #b91c1c;
 }
 
 .no-results {
