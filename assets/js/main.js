@@ -167,6 +167,7 @@ function getPathFromUrl() {
 // Enhanced search with folder selection
 let selectedSearchFolder = ""
 
+// Enhanced search with current path preservation
 function performSearch() {
   const filenameQuery = document.getElementById("filename-search").value.trim()
   const contentQuery = document.getElementById("content-search").value.trim()
@@ -195,6 +196,13 @@ function performSearch() {
   actionInput.name = "action"
   actionInput.value = "search"
   form.appendChild(actionInput)
+
+  // TAMBAHAN: Simpan current path
+  const currentPathInput = document.createElement("input")
+  currentPathInput.type = "hidden"
+  currentPathInput.name = "current_path"
+  currentPathInput.value = getPathFromUrl()
+  form.appendChild(currentPathInput)
 
   if (filenameQuery) {
     const filenameInput = document.createElement("input")
