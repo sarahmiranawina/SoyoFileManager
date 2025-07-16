@@ -180,6 +180,10 @@ function performSearch() {
     return
   }
 
+  // DEBUG: Log current URL and path
+  console.log("DEBUG: Current URL:", window.location.href)
+  console.log("DEBUG: Current search params:", window.location.search)
+
   // Show loading indicator
   const searchBtn = document.querySelector(".search-btn")
   const originalText = searchBtn.textContent
@@ -197,15 +201,22 @@ function performSearch() {
   actionInput.value = "search"
   form.appendChild(actionInput)
 
-  // PERBAIKAN: Kirim current path dari URL parameter yang sekarang
+  // PERBAIKAN: Ambil current path dari URL parameter yang sekarang
   const urlParams = new URLSearchParams(window.location.search)
   const currentPath = urlParams.get("path") || ""
+
+  // DEBUG: Log path yang akan dikirim
+  console.log("DEBUG: Current path from URL:", currentPath)
 
   const currentPathInput = document.createElement("input")
   currentPathInput.type = "hidden"
   currentPathInput.name = "current_path"
   currentPathInput.value = currentPath
   form.appendChild(currentPathInput)
+
+  // DEBUG: Log semua parameter yang akan dikirim
+  console.log("DEBUG: Sending current_path:", currentPath)
+  console.log("DEBUG: Sending search_folder:", searchFolder)
 
   if (filenameQuery) {
     const filenameInput = document.createElement("input")
