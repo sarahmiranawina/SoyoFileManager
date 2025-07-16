@@ -10,3 +10,4 @@ if (!file_exists($target)) {
         die("Failed");
     }
 }
+?>
