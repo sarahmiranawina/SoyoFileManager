@@ -36,89 +36,308 @@ function generatePasswordHash($password) {
     return password_hash($password, PASSWORD_DEFAULT);
 }
 
-// ==================== ENHANCED PATH FUNCTIONS ====================
-function getCurrentPath() {
-    global $config;
+// ==================== PATH FUNCTIONS - REFACTORED ====================
+class PathManager {
+    private $config;
     
-    $requestedPath = $_GET['path'] ?? '';
-    
-    // Jika tidak ada path, gunakan upload_path sebagai default
-    if (empty($requestedPath)) {
-        return realpath($config['upload_path']);
+    public function __construct($config) {
+        $this->config = $config;
     }
     
-    // PERBAIKAN: Deteksi jika path adalah sibling directory dari upload_path
-    $uploadPath = realpath($config['upload_path']);
-    $uploadParent = dirname($uploadPath);
-    
-    // Jika path dimulai dengan /, anggap sebagai absolute path
-    if (strpos($requestedPath, '/') === 0) {
-        $fullPath = realpath($requestedPath);
-    } else {
-        // PERBAIKAN: Cek apakah ini sibling directory
+    /**
+     * Resolve requested path to absolute path with proper error handling
+     */
+    public function resolveRequestedPath($requestedPath = null) {
+        // If no path requested, return upload_path as default
+        if (empty($requestedPath)) {
+            $uploadPath = realpath($this->config['upload_path']);
+            if (!$uploadPath) {
+                throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+            }
+            return $uploadPath;
+        }
+        
+        $uploadPath = realpath($this->config['upload_path']);
+        if (!$uploadPath) {
+            throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+        }
+        
+        $uploadParent = dirname($uploadPath);
+        
+        // Handle absolute paths (starting with /)
+        if (strpos($requestedPath, '/') === 0) {
+            $resolvedPath = realpath($requestedPath);
+            if (!$resolvedPath) {
+                throw new Exception("Absolute path does not exist: " . $requestedPath);
+            }
+            
+            if (!$this->canAccessPath($resolvedPath)) {
+                throw new Exception("Access denied to absolute path: " . $requestedPath . " (resolved: " . $resolvedPath . ")");
+            }
+            
+            return $resolvedPath;
+        }
+        
+        // Handle relative paths - try sibling directory first, then subdirectory
         $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
         $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
         
-        // Prioritas: sibling directory dulu, baru relative path
+        // Priority: sibling directory first
         if ($possibleSibling && is_dir($possibleSibling) && $possibleSibling !== $uploadPath) {
-            $fullPath = $possibleSibling;
-        } elseif ($possibleRelative && is_dir($possibleRelative)) {
-            $fullPath = $possibleRelative;
-        } else {
-            $fullPath = false;
+            if (!$this->canAccessPath($possibleSibling)) {
+                throw new Exception("Access denied to sibling directory: " . $requestedPath . " (resolved: " . $possibleSibling . ")");
+            }
+            return $possibleSibling;
         }
+        
+        // Then try relative path within upload directory
+        if ($possibleRelative && is_dir($possibleRelative)) {
+            if (!$this->canAccessPath($possibleRelative)) {
+                throw new Exception("Access denied to relative path: " . $requestedPath . " (resolved: " . $possibleRelative . ")");
+            }
+            return $possibleRelative;
+        }
+        
+        // If neither exists, provide detailed error
+        $errorMsg = "Path not found: " . $requestedPath . "\n";
+        $errorMsg .= "Tried sibling: " . ($uploadParent . '/' . $requestedPath) . " - " . ($possibleSibling ? "exists but not directory" : "does not exist") . "\n";
+        $errorMsg .= "Tried relative: " . ($uploadPath . '/' . $requestedPath) . " - " . ($possibleRelative ? "exists but not directory" : "does not exist");
+        
+        throw new Exception($errorMsg);
     }
     
-    // Jika path tidak valid, fallback ke upload_path
-    if (!$fullPath || !is_dir($fullPath)) {
-        return realpath($config['upload_path']);
+    /**
+     * Convert absolute path back to relative path for URLs
+     */
+    public function getRelativePath($absolutePath) {
+        $uploadPath = realpath($this->config['upload_path']);
+        if (!$uploadPath) {
+            throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+        }
+        
+        $uploadParent = dirname($uploadPath);
+        
+        // If path is same as upload_path, return empty (home)
+        if ($absolutePath === $uploadPath) {
+            return '';
+        }
+        
+        // If path is sibling of upload_path
+        if (dirname($absolutePath) === $uploadParent && $absolutePath !== $uploadPath) {
+            return basename($absolutePath);
+        }
+        
+        // If path is within upload_path, return relative path
+        if (strpos($absolutePath, $uploadPath) === 0) {
+            $relativePath = substr($absolutePath, strlen($uploadPath));
+            return trim($relativePath, '/\\');
+        }
+        
+        // If path is outside upload_path, return absolute path
+        return $absolutePath;
     }
     
-    // Security check: pastikan tidak keluar dari root_path
-    $rootPath = realpath($config['root_path']);
-    if (!startsWith($fullPath, $rootPath)) {
-        return realpath($config['upload_path']);
+    /**
+     * Check if path can be accessed based on security rules
+     */
+    public function canAccessPath($path) {
+        $realPath = realpath($path);
+        if (!$realPath) {
+            return false;
+        }
+        
+        $rootPath = realpath($this->config['root_path']);
+        if (!$rootPath) {
+            throw new Exception("Root path does not exist: " . $this->config['root_path']);
+        }
+        
+        return strpos($realPath, $rootPath) === 0;
     }
     
-    return $fullPath;
+    /**
+     * Generate breadcrumb navigation
+     */
+    public function generateBreadcrumb($currentPath) {
+        $uploadPath = realpath($this->config['upload_path']);
+        if (!$uploadPath) {
+            throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+        }
+        
+        $breadcrumb = '<a href="?">🏠 Home (' . basename($uploadPath) . ')</a>';
+        
+        // If current path is same as upload path, show only home
+        if ($currentPath === $uploadPath) {
+            $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
+            $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
+            $breadcrumb .= '</div>';
+            return $breadcrumb;
+        }
+        
+        // If within upload path, show relative breadcrumb
+        if (strpos($currentPath, $uploadPath) === 0) {
+            $relativePath = substr($currentPath, strlen($uploadPath));
+            $pathParts = explode('/', trim($relativePath, '/'));
+            $pathParts = array_filter($pathParts);
+            
+            $buildPath = '';
+            foreach ($pathParts as $part) {
+                $buildPath .= '/' . $part;
+                $encodedPath = urlencode(trim($buildPath, '/'));
+                $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+            }
+        } else {
+            // If outside upload path, show absolute breadcrumb
+            $pathParts = explode('/', trim($currentPath, '/'));
+            $pathParts = array_filter($pathParts);
+            
+            $buildPath = '';
+            foreach ($pathParts as $part) {
+                $buildPath .= '/' . $part;
+                $encodedPath = urlencode($buildPath);
+                $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+            }
+        }
+        
+        $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
+        $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
+        $breadcrumb .= '<br>🏠 Upload Base: ' . htmlspecialchars($uploadPath);
+        $breadcrumb .= '</div>';
+        
+        return $breadcrumb;
+    }
+}
+
+// Initialize path manager
+$pathManager = new PathManager($config);
+
+// Wrapper functions for backward compatibility
+function getCurrentPath() {
+    global $pathManager;
+    try {
+        return $pathManager->resolveRequestedPath($_GET['path'] ?? '');
+    } catch (Exception $e) {
+        showError("Path Resolution Error", $e->getMessage());
+        exit;
+    }
 }
 
 function getRelativePath($fullPath) {
-    global $config;
-    
-    $uploadPath = realpath($config['upload_path']);
-    $uploadParent = dirname($uploadPath);
-    
-    // Jika path sama dengan upload_path, return empty
-    if ($fullPath === $uploadPath) {
-        return '';
+    global $pathManager;
+    try {
+        return $pathManager->getRelativePath($fullPath);
+    } catch (Exception $e) {
+        showError("Path Conversion Error", $e->getMessage());
+        exit;
     }
-    
-    // PERBAIKAN: Jika path adalah sibling dari upload_path
-    if (dirname($fullPath) === $uploadParent && $fullPath !== $uploadPath) {
-        return basename($fullPath);
-    }
-    
-    // Jika path di dalam upload_path, return relative path
-    if (startsWith($fullPath, $uploadPath)) {
-        $relativePath = substr($fullPath, strlen($uploadPath));
-        return trim($relativePath, '/\\');
-    }
-    
-    // Jika path di luar upload_path, return absolute path
-    return $fullPath;
 }
 
 function canAccessPath($path) {
-    global $config;
-    
-    $realPath = realpath($path);
-    if (!$realPath) {
-        return false;
+    global $pathManager;
+    try {
+        return $pathManager->canAccessPath($path);
+    } catch (Exception $e) {
+        showError("Access Check Error", $e->getMessage());
+        exit;
     }
-    
-    $rootPath = realpath($config['root_path']);
-    return startsWith($realPath, $rootPath);
+}
+
+function generateBreadcrumb($currentPath) {
+    global $pathManager;
+    try {
+        return $pathManager->generateBreadcrumb($currentPath);
+    } catch (Exception $e) {
+        showError("Breadcrumb Generation Error", $e->getMessage());
+        exit;
+    }
+}
+
+// ==================== ERROR HANDLING ====================
+function showError($title, $message) {
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title><?php echo htmlspecialchars($title); ?> - Soyo File Manager</title>
+        <style>
+            body {
+                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                background: #1e1e2e;
+                color: #e0e0e0;
+                padding: 40px;
+                line-height: 1.6;
+            }
+            .error-container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: #2a2a3e;
+                padding: 30px;
+                border-radius: 12px;
+                border: 1px solid #dc2626;
+            }
+            .error-title {
+                color: #ef4444;
+                font-size: 24px;
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .error-message {
+                background: #1e1e2e;
+                padding: 20px;
+                border-radius: 8px;
+                border-left: 4px solid #ef4444;
+                margin-bottom: 20px;
+                white-space: pre-line;
+                font-family: monospace;
+                font-size: 14px;
+            }
+            .error-actions {
+                display: flex;
+                gap: 15px;
+            }
+            .error-actions a {
+                background: #6366f1;
+                color: white;
+                padding: 10px 20px;
+                text-decoration: none;
+                border-radius: 6px;
+                transition: background 0.3s;
+            }
+            .error-actions a:hover {
+                background: #4f46e5;
+            }
+            .debug-info {
+                background: #374151;
+                padding: 15px;
+                border-radius: 6px;
+                margin-top: 20px;
+                font-size: 12px;
+                color: #9ca3af;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="error-container">
+            <div class="error-title">
+                🚨 <?php echo htmlspecialchars($title); ?>
+            </div>
+            <div class="error-message"><?php echo htmlspecialchars($message); ?></div>
+            <div class="error-actions">
+                <a href="?">🏠 Go Home</a>
+                <a href="javascript:history.back()">← Go Back</a>
+            </div>
+            <div class="debug-info">
+                <strong>Debug Info:</strong><br>
+                Request URI: <?php echo htmlspecialchars($_SERVER['REQUEST_URI'] ?? 'N/A'); ?><br>
+                Requested Path: <?php echo htmlspecialchars($_GET['path'] ?? 'N/A'); ?><br>
+                Upload Path: <?php echo htmlspecialchars($GLOBALS['config']['upload_path']); ?><br>
+                Root Path: <?php echo htmlspecialchars($GLOBALS['config']['root_path']); ?>
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
 }
 
 // ==================== UTILITY FUNCTIONS ====================
@@ -307,55 +526,6 @@ function recurseCopy($src, $dst) {
     return true;
 }
 
-function generateBreadcrumb($currentPath) {
-    global $config;
-    
-    $uploadPath = realpath($config['upload_path']);
-    $rootPath = realpath($config['root_path']);
-    
-    $breadcrumb = '<a href="?">🏠 Home (' . basename($uploadPath) . ')</a>';
-    
-    // Jika current path sama dengan upload path, return home saja
-    if ($currentPath === $uploadPath) {
-        $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
-        $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
-        $breadcrumb .= '</div>';
-        return $breadcrumb;
-    }
-    
-    // Jika di dalam upload path
-    if (startsWith($currentPath, $uploadPath)) {
-        $relativePath = substr($currentPath, strlen($uploadPath));
-        $pathParts = explode('/', trim($relativePath, '/'));
-        $pathParts = array_filter($pathParts);
-        
-        $buildPath = '';
-        foreach ($pathParts as $part) {
-            $buildPath .= '/' . $part;
-            $encodedPath = urlencode(trim($buildPath, '/'));
-            $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
-        }
-    } else {
-        // Jika di luar upload path, tampilkan absolute path
-        $pathParts = explode('/', trim($currentPath, '/'));
-        $pathParts = array_filter($pathParts);
-        
-        $buildPath = '';
-        foreach ($pathParts as $part) {
-            $buildPath .= '/' . $part;
-            $encodedPath = urlencode($buildPath);
-            $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
-        }
-    }
-    
-    $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
-    $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
-    $breadcrumb .= '<br>🏠 Upload Base: ' . htmlspecialchars($uploadPath);
-    $breadcrumb .= '</div>';
-    
-    return $breadcrumb;
-}
-
 // ==================== FILE OPERATIONS ====================
 function viewFile($filePath) {
     if (!canAccessPath($filePath) || !file_exists($filePath)) {
@@ -388,7 +558,7 @@ function downloadFile($filePath) {
 
 function deleteFile($filePath) {
     if (!canAccessPath($filePath) || !file_exists($filePath)) {
-        echo "File not found or access denied.";
+        showError("Delete Error", "File not found or access denied: " . $filePath);
         return;
     }
     
@@ -397,7 +567,7 @@ function deleteFile($filePath) {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error deleting file.";
+        showError("Delete Error", "Failed to delete file: " . $filePath);
     }
 }
 
@@ -405,7 +575,7 @@ function uploadFiles($targetDirectory) {
     global $config;
     
     if (!canAccessPath($targetDirectory) || !is_dir($targetDirectory) || !is_writable($targetDirectory)) {
-        echo "Target directory is not writable or access denied.";
+        showError("Upload Error", "Target directory is not writable or access denied: " . $targetDirectory);
         return;
     }
     
@@ -445,12 +615,12 @@ function uploadFiles($targetDirectory) {
 
 function createFolder($targetDirectory, $folderName) {
     if (empty($folderName)) {
-        echo "Folder name cannot be empty.";
+        showError("Create Folder Error", "Folder name cannot be empty");
         return;
     }
     
     if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
-        echo "Access denied or directory not writable.";
+        showError("Create Folder Error", "Access denied or directory not writable: " . $targetDirectory);
         return;
     }
     
@@ -461,25 +631,25 @@ function createFolder($targetDirectory, $folderName) {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error creating folder.";
+        showError("Create Folder Error", "Failed to create folder: " . $newFolderPath);
     }
 }
 
 function createFile($targetDirectory, $fileName, $fileContent = '') {
     if (empty($fileName)) {
-        echo "File name cannot be empty.";
+        showError("Create File Error", "File name cannot be empty");
         return;
     }
     
     if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
-        echo "Access denied or directory not writable.";
+        showError("Create File Error", "Access denied or directory not writable: " . $targetDirectory);
         return;
     }
     
     $newFilePath = $targetDirectory . '/' . $fileName;
     
     if (file_exists($newFilePath)) {
-        echo "File already exists.";
+        showError("Create File Error", "File already exists: " . $newFilePath);
         return;
     }
     
@@ -488,13 +658,13 @@ function createFile($targetDirectory, $fileName, $fileContent = '') {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error creating file.";
+        showError("Create File Error", "Failed to create file: " . $newFilePath);
     }
 }
 
 function saveFile($filePath, $content) {
     if (!canAccessPath($filePath)) {
-        echo "Access denied.";
+        showError("Save File Error", "Access denied: " . $filePath);
         return;
     }
     
@@ -504,13 +674,13 @@ function saveFile($filePath, $content) {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error saving file.";
+        showError("Save File Error", "Failed to save file: " . $filePath);
     }
 }
 
 function changePermissions($filePath, $permissions) {
     if (!canAccessPath($filePath)) {
-        echo "Access denied.";
+        showError("Change Permissions Error", "Access denied: " . $filePath);
         return;
     }
     
@@ -521,18 +691,18 @@ function changePermissions($filePath, $permissions) {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error changing permissions.";
+        showError("Change Permissions Error", "Failed to change permissions for: " . $filePath);
     }
 }
 
 function compressFiles($targetDirectory, $files, $archiveName) {
     if (empty($files)) {
-        echo "No files selected for compression.";
+        showError("Compress Error", "No files selected for compression");
         return;
     }
     
     if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
-        echo "Access denied or directory not writable.";
+        showError("Compress Error", "Access denied or directory not writable: " . $targetDirectory);
         return;
     }
     
@@ -560,7 +730,7 @@ function compressFiles($targetDirectory, $files, $archiveName) {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error creating zip archive.";
+        showError("Compress Error", "Failed to create zip archive: " . $zipFileName);
     }
 }
 
@@ -584,7 +754,7 @@ function addDirectoryToZip($zip, $dirPath, $localPath) {
 
 function extractFile($filePath) {
     if (!canAccessPath($filePath)) {
-        echo "Access denied.";
+        showError("Extract Error", "Access denied: " . $filePath);
         return;
     }
     
@@ -598,13 +768,13 @@ function extractFile($filePath) {
         $relativePath = getRelativePath($currentPath);
         header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
-        echo "Error opening zip archive.";
+        showError("Extract Error", "Failed to open zip archive: " . $filePath);
     }
 }
 
 function copyToClipboard($filePath) {
     if (!canAccessPath($filePath)) {
-        echo "Access denied.";
+        showError("Copy Error", "Access denied: " . $filePath);
         return;
     }
     
@@ -619,12 +789,12 @@ function copyToClipboard($filePath) {
 
 function pasteFromClipboard($targetDirectory) {
     if (!isset($_SESSION['clipboard'])) {
-        echo "Clipboard is empty.";
+        showError("Paste Error", "Clipboard is empty");
         return;
     }
     
     if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
-        echo "Access denied or directory not writable.";
+        showError("Paste Error", "Access denied or directory not writable: " . $targetDirectory);
         return;
     }
     
@@ -633,7 +803,7 @@ function pasteFromClipboard($targetDirectory) {
     $destinationPath = $targetDirectory . '/' . $fileName;
     
     if (file_exists($destinationPath)) {
-        echo "File/directory already exists in the destination.";
+        showError("Paste Error", "File/directory already exists in destination: " . $destinationPath);
         return;
     }
     
@@ -643,7 +813,7 @@ function pasteFromClipboard($targetDirectory) {
             $relativePath = getRelativePath($currentPath);
             header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
         } else {
-            echo "Error copying directory.";
+            showError("Paste Error", "Failed to copy directory from " . $sourcePath . " to " . $destinationPath);
         }
     } else {
         if (copy($sourcePath, $destinationPath)) {
@@ -651,36 +821,49 @@ function pasteFromClipboard($targetDirectory) {
             $relativePath = getRelativePath($currentPath);
             header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
         } else {
-            echo "Error copying file.";
+            showError("Paste Error", "Failed to copy file from " . $sourcePath . " to " . $destinationPath);
         }
     }
 }
 
 function bulkDeleteFiles($files, $currentPath) {
     if (empty($files)) {
-        echo "No files selected for deletion.";
+        showError("Bulk Delete Error", "No files selected for deletion");
         return;
     }
     
     if (!canAccessPath($currentPath)) {
-        echo "Access denied.";
+        showError("Bulk Delete Error", "Access denied: " . $currentPath);
         return;
     }
     
     $deletedCount = 0;
+    $errors = [];
+    
     foreach ($files as $file) {
         $filePath = $currentPath . '/' . $file;
         if (file_exists($filePath) && canAccessPath($filePath)) {
             if (is_dir($filePath)) {
                 if (deleteDirectory($filePath)) {
                     $deletedCount++;
+                } else {
+                    $errors[] = "Failed to delete directory: " . $file;
                 }
             } else {
                 if (unlink($filePath)) {
                     $deletedCount++;
+                } else {
+                    $errors[] = "Failed to delete file: " . $file;
                 }
             }
+        } else {
+            $errors[] = "File not found or access denied: " . $file;
         }
+    }
+    
+    if (!empty($errors)) {
+        showError("Bulk Delete Errors", "Successfully deleted $deletedCount items, but encountered errors:\n" . implode("\n", $errors));
+        return;
     }
     
     $_SESSION['message'] = "Successfully deleted $deletedCount items.";
@@ -690,12 +873,12 @@ function bulkDeleteFiles($files, $currentPath) {
 
 function bulkCopyFiles($files, $currentPath) {
     if (empty($files)) {
-        echo "No files selected for copying.";
+        showError("Bulk Copy Error", "No files selected for copying");
         return;
     }
     
     if (!canAccessPath($currentPath)) {
-        echo "Access denied.";
+        showError("Bulk Copy Error", "Access denied: " . $currentPath);
         return;
     }
     
@@ -734,8 +917,6 @@ function deleteDirectory($dir) {
     return rmdir($dir);
 }
 
-// ==================== ENHANCED SEARCH FUNCTIONS ====================
-
 // ==================== TEMPLATE FUNCTIONS ====================
 function showLoginForm() {
     ?>
@@ -762,7 +943,7 @@ function showFileManager($currentPath, $relativePath) {
     global $config;
     
     if (!canAccessPath($currentPath)) {
-        echo "<h1>Access Denied</h1><p>You don't have permission to access this directory.</p>";
+        showError("Access Denied", "You don't have permission to access this directory: " . $currentPath);
         return;
     }
     
@@ -772,6 +953,9 @@ function showFileManager($currentPath, $relativePath) {
         $files = array_filter($files, function($file) use ($config) {
             return $file !== '.' && ($config['show_hidden'] || $file[0] !== '.');
         });
+    } else {
+        showError("Directory Not Readable", "Cannot read directory: " . $currentPath);
+        return;
     }
     
     $sortBy = $_GET['sort'] ?? 'name';
@@ -1002,11 +1186,16 @@ function showFileManager($currentPath, $relativePath) {
 
 function showEditor($filePath) {
     if (!canAccessPath($filePath)) {
-        echo "<h1>Access Denied</h1><p>You don't have permission to access this file.</p>";
+        showError("Editor Access Denied", "You don't have permission to access this file: " . $filePath);
         return;
     }
     
     $content = file_get_contents($filePath);
+    if ($content === false) {
+        showError("Editor Error", "Cannot read file: " . $filePath);
+        return;
+    }
+    
     $fileName = basename($filePath);
     $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
     
@@ -1071,7 +1260,7 @@ function showEditor($filePath) {
 
 function showPermissionEditor($filePath) {
     if (!canAccessPath($filePath)) {
-        echo "<h1>Access Denied</h1><p>You don't have permission to access this file.</p>";
+        showError("Permission Editor Access Denied", "You don't have permission to access this file: " . $filePath);
         return;
     }
     
@@ -1123,31 +1312,11 @@ $relativePath = getRelativePath($currentPath);
 // Get file path for file-specific actions
 $filePath = $currentPath;
 if ($action !== '' && isset($_GET['path'])) {
-    $requestedPath = $_GET['path'];
-    
-    // Handle both relative and absolute paths
-    if (strpos($requestedPath, '/') === 0) {
-        $filePath = realpath($requestedPath);
-    } else {
-        $uploadPath = realpath($config['upload_path']);
-        $uploadParent = dirname($uploadPath);
-        
-        // Cek apakah ini sibling directory
-        $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
-        $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
-        
-        if ($possibleSibling && file_exists($possibleSibling) && $possibleSibling !== $uploadPath) {
-            $filePath = $possibleSibling;
-        } elseif ($possibleRelative && file_exists($possibleRelative)) {
-            $filePath = $possibleRelative;
-        } else {
-            $filePath = false;
-        }
-    }
-    
-    // Security check
-    if (!$filePath || !canAccessPath($filePath)) {
-        $filePath = $currentPath;
+    try {
+        $filePath = $pathManager->resolveRequestedPath($_GET['path']);
+    } catch (Exception $e) {
+        showError("File Path Resolution Error", $e->getMessage());
+        exit;
     }
 }
 
