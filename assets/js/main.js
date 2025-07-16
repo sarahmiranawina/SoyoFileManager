@@ -152,9 +152,6 @@ function getPathFromUrl() {
   return urlParams.get("path") || ""
 }
 
-// Enhanced search with folder selection
-const selectedSearchFolder = ""
-
 // Dropdown functionality
 function toggleDropdown(event, dropdownId) {
   event.stopPropagation()
@@ -178,12 +175,32 @@ document.addEventListener("click", () => {
   })
 })
 
+// Search functionality
 function toggleSearch() {
-  document.getElementById("search-form").classList.toggle("show")
+  const searchForm = document.getElementById("search-form")
+  const isVisible = searchForm.classList.contains("show")
+
+  if (isVisible) {
+    searchForm.classList.remove("show")
+  } else {
+    searchForm.classList.add("show")
+    // Focus on search input when opened
+    const searchInput = document.getElementById("search-query")
+    if (searchInput) {
+      setTimeout(() => searchInput.focus(), 100)
+    }
+  }
 }
 
 function performSearch() {
   const form = document.getElementById("search-form-element")
+  const searchQuery = document.getElementById("search-query").value.trim()
+
+  if (searchQuery.length < 2) {
+    alert("Please enter at least 2 characters to search")
+    return
+  }
+
   form.submit()
 }
 
@@ -217,10 +234,12 @@ document.addEventListener("DOMContentLoaded", () => {
     if (searchInput) {
       searchInput.value = searchTerm
       document.getElementById("search-form").classList.add("show")
-      document.getElementById("search-results-info").classList.add("show")
+
+      // Show search results info if exists
+      const searchResultsInfo = document.getElementById("search-results-info")
+      if (searchResultsInfo) {
+        searchResultsInfo.classList.add("show")
+      }
     }
   }
 })
-
-// Initialize folder selection
-document.addEventListener("DOMContentLoaded", () => {})
