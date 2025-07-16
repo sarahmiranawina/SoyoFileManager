@@ -197,11 +197,14 @@ function performSearch() {
   actionInput.value = "search"
   form.appendChild(actionInput)
 
-  // TAMBAHAN: Simpan current path
+  // PERBAIKAN: Kirim current path dari URL parameter yang sekarang
+  const urlParams = new URLSearchParams(window.location.search)
+  const currentPath = urlParams.get("path") || ""
+
   const currentPathInput = document.createElement("input")
   currentPathInput.type = "hidden"
   currentPathInput.name = "current_path"
-  currentPathInput.value = getPathFromUrl()
+  currentPathInput.value = currentPath
   form.appendChild(currentPathInput)
 
   if (filenameQuery) {
