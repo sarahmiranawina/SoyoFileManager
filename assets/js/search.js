@@ -72,6 +72,16 @@ function performSearchResults() {
   actionInput.value = "search"
   form.appendChild(actionInput)
 
+  // TAMBAHAN: Kirim current_path dari URL saat ini
+  const urlParams = new URLSearchParams(window.location.search)
+  const currentPath = urlParams.get("current_path") || ""
+
+  const currentPathInput = document.createElement("input")
+  currentPathInput.type = "hidden"
+  currentPathInput.name = "current_path"
+  currentPathInput.value = currentPath
+  form.appendChild(currentPathInput)
+
   if (filenameQuery) {
     const filenameInput = document.createElement("input")
     filenameInput.type = "hidden"
