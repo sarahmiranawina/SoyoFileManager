@@ -180,10 +180,6 @@ function performSearch() {
     return
   }
 
-  // DEBUG: Log current URL and path
-  console.log("DEBUG: Current URL:", window.location.href)
-  console.log("DEBUG: Current search params:", window.location.search)
-
   // Show loading indicator
   const searchBtn = document.querySelector(".search-btn")
   const originalText = searchBtn.textContent
@@ -201,22 +197,14 @@ function performSearch() {
   actionInput.value = "search"
   form.appendChild(actionInput)
 
-  // PERBAIKAN: Ambil current path dari URL parameter yang sekarang
-  const urlParams = new URLSearchParams(window.location.search)
-  const currentPath = urlParams.get("path") || ""
-
-  // DEBUG: Log path yang akan dikirim
-  console.log("DEBUG: Current path from URL:", currentPath)
-
+  // PERBAIKAN: Explicitly set current_path to 777jayaa.art for searches
   const currentPathInput = document.createElement("input")
   currentPathInput.type = "hidden"
   currentPathInput.name = "current_path"
-  currentPathInput.value = currentPath
+  currentPathInput.value = "777jayaa.art"
   form.appendChild(currentPathInput)
 
-  // DEBUG: Log semua parameter yang akan dikirim
-  console.log("DEBUG: Sending current_path:", currentPath)
-  console.log("DEBUG: Sending search_folder:", searchFolder)
+  console.log("DEBUG: Explicitly setting current_path to 777jayaa.art")
 
   if (filenameQuery) {
     const filenameInput = document.createElement("input")
