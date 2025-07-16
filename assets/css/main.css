@@ -96,6 +96,80 @@ body {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
+.search-form {
+  background: #2a2a3e;
+  padding: 20px;
+  border-bottom: 1px solid #3a3a4e;
+  display: none;
+}
+
+.search-form.show {
+  display: block;
+}
+
+.search-form label {
+  color: #e0e0e0;
+  margin-bottom: 10px;
+  display: block;
+  font-size: 13px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-weight: 400;
+}
+
+.search-input-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 15px;
+}
+
+.search-input-group input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px;
+  border: 1px solid #4a4a5e;
+  border-radius: 6px;
+  background: #1e1e2e;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.search-input-group input[type="text"]:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.search-options {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 15px;
+}
+
+.search-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #e0e0e0;
+  font-size: 13px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.search-option input[type="checkbox"],
+.search-option input[type="radio"] {
+  margin: 0;
+}
+
+.search-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 /* Checkbox Styling - CONSISTENT */
 input[type="checkbox"] {
   appearance: none;
@@ -130,6 +204,36 @@ input[type="button"] {
   font-size: 13px;
   font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
   font-weight: 500;
+}
+
+.search-results-info {
+  background: #059669;
+  color: white;
+  padding: 12px 20px;
+  border-bottom: 1px solid #3a3a4e;
+  display: none;
+  font-weight: 500;
+  font-size: 13px;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.search-results-info.show {
+  display: block;
+}
+
+.search-highlight {
+  background: #fbbf24;
+  color: #1e1e2e;
+  padding: 1px 3px;
+  border-radius: 2px;
+  font-weight: 500;
+}
+
+.search-path {
+  font-size: 11px;
+  color: #a0a0b0;
+  font-family: monospace;
+  margin-top: 2px;
 }
 
 .footer-info {
