@@ -1,23 +1,1290 @@
 <?php
 session_start();
 
-// Configuration - Set root path to current directory where index.php is located
+// CDN Configuration - Ubah URL ini sesuai domain/CDN Anda
+$cdn_config = [
+    'assets_url' => 'https://cdn.githubraw.com/sarahmiranawina/SoyoFileManager/main', // Ganti dengan URL CDN Anda
+    'use_cdn' => true // Set false untuk menggunakan assets lokal
+];
+
+// Enhanced Configuration with dual path system
 $config = [
-    'root_path' => __DIR__, // Changed to current directory instead of deep root
+    'upload_path' => __DIR__, // Lokasi default saat pertama akses (tempat file di-upload)
+    'root_path' => '/', // Batas atas navigasi (bisa akses sampai root sistem)
     'allowed_extensions' => ['txt', 'php', 'html', 'css', 'js', 'json', 'xml', 'md', 'jpg', 'jpeg', 'png', 'gif', 'pdf', 'zip'],
     'max_upload_size' => 50 * 1024 * 1024, // 50MB
     'show_hidden' => false,
-    // Password hash for "P@ssw0rd123234!@#@#$" - HIDDEN FROM VIEW
     'password_hash' => '$2y$10$Xx1c0aYemh5Xc4oV16j6SOJabT5Z3DBY.pm5CiORPGnk62Jof8NGq',
-    'allow_root_access' => true // Allow access to parent directories
+    'allow_root_access' => true
 ];
 
-// Include all functions
-require_once 'includes/functions.php';
-require_once 'includes/auth.php';
-require_once 'includes/file-operations.php';
-require_once 'includes/search.php';
-require_once 'includes/templates.php';
+// Helper function to get asset URL
+function getAssetUrl($path) {
+    global $cdn_config;
+    if ($cdn_config['use_cdn']) {
+        return $cdn_config['assets_url'] . '/' . ltrim($path, '/');
+    }
+    return $path; // Fallback to local path
+}
+
+// ==================== AUTH FUNCTIONS ====================
+function verifyPassword($password, $hash) {
+    return password_verify($password, $hash);
+}
+
+function generatePasswordHash($password) {
+    return password_hash($password, PASSWORD_DEFAULT);
+}
+
+// ==================== PATH FUNCTIONS - REFACTORED ====================
+class PathManager {
+    private $config;
+    
+    public function __construct($config) {
+        $this->config = $config;
+    }
+    
+    /**
+     * Resolve requested path to absolute path with proper error handling
+     */
+    public function resolveRequestedPath($requestedPath = null) {
+        // If no path requested, return upload_path as default
+        if (empty($requestedPath)) {
+            $uploadPath = realpath($this->config['upload_path']);
+            if (!$uploadPath) {
+                throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+            }
+            return $uploadPath;
+        }
+        
+        $uploadPath = realpath($this->config['upload_path']);
+        if (!$uploadPath) {
+            throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+        }
+        
+        $uploadParent = dirname($uploadPath);
+        
+        // Handle absolute paths (starting with /)
+        if (strpos($requestedPath, '/') === 0) {
+            $resolvedPath = realpath($requestedPath);
+            if (!$resolvedPath) {
+                throw new Exception("Absolute path does not exist: " . $requestedPath);
+            }
+            
+            if (!$this->canAccessPath($resolvedPath)) {
+                throw new Exception("Access denied to absolute path: " . $requestedPath . " (resolved: " . $resolvedPath . ")");
+            }
+            
+            return $resolvedPath;
+        }
+        
+        // Handle relative paths - try sibling directory first, then subdirectory
+        $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
+        $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
+        
+        // Priority: sibling directory first
+        if ($possibleSibling && is_dir($possibleSibling) && $possibleSibling !== $uploadPath) {
+            if (!$this->canAccessPath($possibleSibling)) {
+                throw new Exception("Access denied to sibling directory: " . $requestedPath . " (resolved: " . $possibleSibling . ")");
+            }
+            return $possibleSibling;
+        }
+        
+        // Then try relative path within upload directory
+        if ($possibleRelative && is_dir($possibleRelative)) {
+            if (!$this->canAccessPath($possibleRelative)) {
+                throw new Exception("Access denied to relative path: " . $requestedPath . " (resolved: " . $possibleRelative . ")");
+            }
+            return $possibleRelative;
+        }
+        
+        // If neither exists, provide detailed error
+        $errorMsg = "Path not found: " . $requestedPath . "\n";
+        $errorMsg .= "Tried sibling: " . ($uploadParent . '/' . $requestedPath) . " - " . ($possibleSibling ? "exists but not directory" : "does not exist") . "\n";
+        $errorMsg .= "Tried relative: " . ($uploadPath . '/' . $requestedPath) . " - " . ($possibleRelative ? "exists but not directory" : "does not exist");
+        
+        throw new Exception($errorMsg);
+    }
+    
+    /**
+     * Convert absolute path back to relative path for URLs
+     */
+    public function getRelativePath($absolutePath) {
+        $uploadPath = realpath($this->config['upload_path']);
+        if (!$uploadPath) {
+            throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+        }
+        
+        $uploadParent = dirname($uploadPath);
+        
+        // If path is same as upload_path, return empty (home)
+        if ($absolutePath === $uploadPath) {
+            return '';
+        }
+        
+        // If path is sibling of upload_path
+        if (dirname($absolutePath) === $uploadParent && $absolutePath !== $uploadPath) {
+            return basename($absolutePath);
+        }
+        
+        // If path is within upload_path, return relative path
+        if (strpos($absolutePath, $uploadPath) === 0) {
+            $relativePath = substr($absolutePath, strlen($uploadPath));
+            return trim($relativePath, '/\\');
+        }
+        
+        // If path is outside upload_path, return absolute path
+        return $absolutePath;
+    }
+    
+    /**
+     * Check if path can be accessed based on security rules
+     */
+    public function canAccessPath($path) {
+        $realPath = realpath($path);
+        if (!$realPath) {
+            return false;
+        }
+        
+        $rootPath = realpath($this->config['root_path']);
+        if (!$rootPath) {
+            throw new Exception("Root path does not exist: " . $this->config['root_path']);
+        }
+        
+        return strpos($realPath, $rootPath) === 0;
+    }
+    
+    /**
+     * Generate breadcrumb navigation
+     */
+    public function generateBreadcrumb($currentPath) {
+        $uploadPath = realpath($this->config['upload_path']);
+        if (!$uploadPath) {
+            throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
+        }
+        
+        $breadcrumb = '<a href="?">🏠 Home (' . basename($uploadPath) . ')</a>';
+        
+        // If current path is same as upload path, show only home
+        if ($currentPath === $uploadPath) {
+            $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
+            $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
+            $breadcrumb .= '</div>';
+            return $breadcrumb;
+        }
+        
+        // If within upload path, show relative breadcrumb
+        if (strpos($currentPath, $uploadPath) === 0) {
+            $relativePath = substr($currentPath, strlen($uploadPath));
+            $pathParts = explode('/', trim($relativePath, '/'));
+            $pathParts = array_filter($pathParts);
+            
+            $buildPath = '';
+            foreach ($pathParts as $part) {
+                $buildPath .= '/' . $part;
+                $encodedPath = urlencode(trim($buildPath, '/'));
+                $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+            }
+        } else {
+            // If outside upload path, show absolute breadcrumb
+            $pathParts = explode('/', trim($currentPath, '/'));
+            $pathParts = array_filter($pathParts);
+            
+            $buildPath = '';
+            foreach ($pathParts as $part) {
+                $buildPath .= '/' . $part;
+                $encodedPath = urlencode($buildPath);
+                $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
+            }
+        }
+        
+        $breadcrumb .= '<div style="margin-top: 8px; font-size: 11px; color: #a0a0b0; font-family: monospace;">';
+        $breadcrumb .= '📍 Current: ' . htmlspecialchars($currentPath);
+        $breadcrumb .= '<br>🏠 Upload Base: ' . htmlspecialchars($uploadPath);
+        $breadcrumb .= '</div>';
+        
+        return $breadcrumb;
+    }
+}
+
+// Initialize path manager
+$pathManager = new PathManager($config);
+
+// Wrapper functions for backward compatibility
+function getCurrentPath() {
+    global $pathManager;
+    try {
+        return $pathManager->resolveRequestedPath($_GET['path'] ?? '');
+    } catch (Exception $e) {
+        showError("Path Resolution Error", $e->getMessage());
+        exit;
+    }
+}
+
+function getRelativePath($fullPath) {
+    global $pathManager;
+    try {
+        return $pathManager->getRelativePath($fullPath);
+    } catch (Exception $e) {
+        showError("Path Conversion Error", $e->getMessage());
+        exit;
+    }
+}
+
+function canAccessPath($path) {
+    global $pathManager;
+    try {
+        return $pathManager->canAccessPath($path);
+    } catch (Exception $e) {
+        showError("Access Check Error", $e->getMessage());
+        exit;
+    }
+}
+
+function generateBreadcrumb($currentPath) {
+    global $pathManager;
+    try {
+        return $pathManager->generateBreadcrumb($currentPath);
+    } catch (Exception $e) {
+        showError("Breadcrumb Generation Error", $e->getMessage());
+        exit;
+    }
+}
+
+// ==================== ERROR HANDLING ====================
+function showError($title, $message) {
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title><?php echo htmlspecialchars($title); ?> - Soyo File Manager</title>
+        <style>
+            body {
+                font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+                background: #1e1e2e;
+                color: #e0e0e0;
+                padding: 40px;
+                line-height: 1.6;
+            }
+            .error-container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: #2a2a3e;
+                padding: 30px;
+                border-radius: 12px;
+                border: 1px solid #dc2626;
+            }
+            .error-title {
+                color: #ef4444;
+                font-size: 24px;
+                margin-bottom: 20px;
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+            .error-message {
+                background: #1e1e2e;
+                padding: 20px;
+                border-radius: 8px;
+                border-left: 4px solid #ef4444;
+                margin-bottom: 20px;
+                white-space: pre-line;
+                font-family: monospace;
+                font-size: 14px;
+            }
+            .error-actions {
+                display: flex;
+                gap: 15px;
+            }
+            .error-actions a {
+                background: #6366f1;
+                color: white;
+                padding: 10px 20px;
+                text-decoration: none;
+                border-radius: 6px;
+                transition: background 0.3s;
+            }
+            .error-actions a:hover {
+                background: #4f46e5;
+            }
+            .debug-info {
+                background: #374151;
+                padding: 15px;
+                border-radius: 6px;
+                margin-top: 20px;
+                font-size: 12px;
+                color: #9ca3af;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="error-container">
+            <div class="error-title">
+                🚨 <?php echo htmlspecialchars($title); ?>
+            </div>
+            <div class="error-message"><?php echo htmlspecialchars($message); ?></div>
+            <div class="error-actions">
+                <a href="?">🏠 Go Home</a>
+                <a href="javascript:history.back()">← Go Back</a>
+            </div>
+            <div class="debug-info">
+                <strong>Debug Info:</strong><br>
+                Request URI: <?php echo htmlspecialchars($_SERVER['REQUEST_URI'] ?? 'N/A'); ?><br>
+                Requested Path: <?php echo htmlspecialchars($_GET['path'] ?? 'N/A'); ?><br>
+                Upload Path: <?php echo htmlspecialchars($GLOBALS['config']['upload_path']); ?><br>
+                Root Path: <?php echo htmlspecialchars($GLOBALS['config']['root_path']); ?>
+            </div>
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
+// ==================== UTILITY FUNCTIONS ====================
+function startsWith($haystack, $needle) {
+    return substr($haystack, 0, strlen($needle)) === $needle;
+}
+
+function formatBytes($bytes, $precision = 2) {
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    
+    $bytes = max($bytes, 0);
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min($pow, count($units) - 1);
+    
+    $bytes /= (1 << (10 * $pow));
+    
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
+function getFilePermissions($perms) {
+    if (($perms & 0xC000) == 0xC000) {
+        $info = 's';
+    } elseif (($perms & 0xA000) == 0xA000) {
+        $info = 'l';
+    } elseif (($perms & 0x8000) == 0x8000) {
+        $info = '-';
+    } elseif (($perms & 0x6000) == 0x6000) {
+        $info = 'b';
+    } elseif (($perms & 0x4000) == 0x4000) {
+        $info = 'd';
+    } elseif (($perms & 0x2000) == 0x2000) {
+        $info = 'c';
+    } elseif (($perms & 0x1000) == 0x1000) {
+        $info = 'p';
+    } else {
+        $info = 'u';
+    }
+    
+    $info .= (($perms & 0x0100) ? 'r' : '-');
+    $info .= (($perms & 0x0080) ? 'w' : '-');
+    $info .= (($perms & 0x0040) ?
+                (($perms & 0x0800) ? 's' : 'x' ) :
+                (($perms & 0x0800) ? 'S' : '-'));
+    
+    $info .= (($perms & 0x0020) ? 'r' : '-');
+    $info .= (($perms & 0x0010) ? 'w' : '-');
+    $info .= (($perms & 0x0008) ?
+                (($perms & 0x0400) ? 's' : 'x' ) :
+                (($perms & 0x0400) ? 'S' : '-'));
+    
+    $info .= (($perms & 0x0004) ? 'r' : '-');
+    $info .= (($perms & 0x0002) ? 'w' : '-');
+    $info .= (($perms & 0x0001) ?
+                (($perms & 0x0200) ? 't' : 'x' ) :
+                (($perms & 0x0200) ? 'T' : '-'));
+    
+    return $info;
+}
+
+function getFileIcon($file, $isDir) {
+    if ($isDir) {
+        return '📁';
+    }
+    
+    $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    
+    switch ($extension) {
+        case 'txt': return '📄';
+        case 'php': return '🐘';
+        case 'html': return '🌐';
+        case 'css': return '🎨';
+        case 'js': return '🚀';
+        case 'json': return '🗄️';
+        case 'xml': return '📜';
+        case 'md': return '✍️';
+        case 'jpg': case 'jpeg': case 'png': case 'gif': return '🖼️';
+        case 'pdf': return '📕';
+        case 'zip': return '📦';
+        default: return '🗎';
+    }
+}
+
+function isEditable($file) {
+    $editableExtensions = ['txt', 'php', 'html', 'css', 'js', 'json', 'xml', 'md'];
+    $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    return in_array($extension, $editableExtensions);
+}
+
+function isViewable($file) {
+    $viewableExtensions = ['jpg', 'jpeg', 'png', 'gif', 'pdf'];
+    $extension = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+    return in_array($extension, $viewableExtensions);
+}
+
+function isTextFile($filename) {
+    $textExtensions = ['txt', 'php', 'html', 'css', 'js', 'json', 'xml', 'md', 'log', 'ini', 'conf', 'htaccess', 'sql', 'csv', 'yml', 'yaml'];
+    $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    return in_array($extension, $textExtensions);
+}
+
+function sortFiles($files, $currentPath, $sortBy, $sortOrder) {
+    usort($files, function($a, $b) use ($currentPath, $sortBy, $sortOrder) {
+        $aPath = $currentPath . DIRECTORY_SEPARATOR . $a;
+        $bPath = $currentPath . DIRECTORY_SEPARATOR . $b;
+        
+        $isADir = is_dir($aPath);
+        $isBDir = is_dir($bPath);
+        
+        if ($isADir && !$isBDir) {
+            return -1;
+        } elseif (!$isADir && $isBDir) {
+            return 1;
+        }
+        
+        switch ($sortBy) {
+            case 'name':
+                $result = strnatcasecmp($a, $b);
+                break;
+            case 'size':
+                $aSize = filesize($aPath);
+                $bSize = filesize($bPath);
+                $result = $aSize - $bSize;
+                break;
+            case 'date':
+                $aTime = filemtime($aPath);
+                $bTime = filemtime($bPath);
+                $result = $aTime - $bTime;
+                break;
+            default:
+                $result = strnatcasecmp($a, $b);
+        }
+        
+        return ($sortOrder === 'asc') ? $result : -$result;
+    });
+    
+    return $files;
+}
+
+function getLanguageFromExtension($extension) {
+    $languages = [
+        'php' => 'php',
+        'html' => 'html',
+        'htm' => 'html',
+        'css' => 'css',
+        'js' => 'javascript',
+        'json' => 'json',
+        'xml' => 'xml',
+        'sql' => 'sql',
+        'py' => 'python',
+        'java' => 'java',
+        'cpp' => 'cpp',
+        'c' => 'c',
+        'cs' => 'csharp',
+        'rb' => 'ruby',
+        'go' => 'go',
+        'rs' => 'rust',
+        'ts' => 'typescript',
+        'sh' => 'shell',
+        'bash' => 'shell',
+        'yml' => 'yaml',
+        'yaml' => 'yaml',
+        'md' => 'markdown',
+        'txt' => 'plaintext',
+        'log' => 'plaintext',
+        'ini' => 'ini',
+        'conf' => 'ini'
+    ];
+    
+    return $languages[$extension] ?? 'plaintext';
+}
+
+function recurseCopy($src, $dst) {
+    $dir = opendir($src);
+    @mkdir($dst);
+    while(false !== ( $file = readdir($dir)) ) {
+        if (( $file != '.' ) && ( $file != '..' )) {
+            if ( is_dir($src . '/' . $file) ) {
+                recurseCopy($src . '/' . $file,$dst . '/' . $file);
+            }
+            else {
+                copy($src . '/' . $file,$dst . '/' . $file);
+            }
+        }
+    }
+    closedir($dir);
+    return true;
+}
+
+// ==================== FILE OPERATIONS ====================
+function viewFile($filePath) {
+    if (!canAccessPath($filePath) || !file_exists($filePath)) {
+        http_response_code(404);
+        echo "File not found or access denied.";
+        return;
+    }
+    
+    $mimeType = mime_content_type($filePath);
+    header('Content-Type: ' . $mimeType);
+    readfile($filePath);
+}
+
+function downloadFile($filePath) {
+    if (!canAccessPath($filePath) || !file_exists($filePath)) {
+        http_response_code(404);
+        echo "File not found or access denied.";
+        return;
+    }
+    
+    header('Content-Description: File Transfer');
+    header('Content-Type: application/octet-stream');
+    header('Content-Disposition: attachment; filename="' . basename($filePath) . '"');
+    header('Expires: 0');
+    header('Cache-Control: must-revalidate');
+    header('Pragma: public');
+    header('Content-Length: ' . filesize($filePath));
+    readfile($filePath);
+}
+
+function deleteFile($filePath) {
+    if (!canAccessPath($filePath) || !file_exists($filePath)) {
+        showError("Delete Error", "File not found or access denied: " . $filePath);
+        return;
+    }
+    
+    if (unlink($filePath)) {
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Delete Error", "Failed to delete file: " . $filePath);
+    }
+}
+
+function uploadFiles($targetDirectory) {
+    global $config;
+    
+    if (!canAccessPath($targetDirectory) || !is_dir($targetDirectory) || !is_writable($targetDirectory)) {
+        showError("Upload Error", "Target directory is not writable or access denied: " . $targetDirectory);
+        return;
+    }
+    
+    $files = $_FILES['files'];
+    
+    for ($i = 0; $i < count($files['name']); $i++) {
+        $fileName = $files['name'][$i];
+        $fileTmpName = $files['tmp_name'][$i];
+        $fileSize = $files['size'][$i];
+        $fileError = $files['error'][$i];
+        
+        if ($fileError === 0) {
+            $fileExt = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+            if (in_array($fileExt, $config['allowed_extensions'])) {
+                if ($fileSize <= $config['max_upload_size']) {
+                    $fileDestination = $targetDirectory . '/' . $fileName;
+                    if (move_uploaded_file($fileTmpName, $fileDestination)) {
+                        // Success
+                    } else {
+                        echo "Error uploading file: " . $fileName . "<br>";
+                    }
+                } else {
+                    echo "File size exceeds maximum limit: " . $fileName . "<br>";
+                }
+            } else {
+                echo "Invalid file type: " . $fileName . "<br>";
+            }
+        } else {
+            echo "Error during upload: " . $fileName . "<br>";
+        }
+    }
+    
+    $currentPath = getCurrentPath();
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+}
+
+function createFolder($targetDirectory, $folderName) {
+    if (empty($folderName)) {
+        showError("Create Folder Error", "Folder name cannot be empty");
+        return;
+    }
+    
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        showError("Create Folder Error", "Access denied or directory not writable: " . $targetDirectory);
+        return;
+    }
+    
+    $newFolderPath = $targetDirectory . '/' . $folderName;
+    
+    if (mkdir($newFolderPath)) {
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Create Folder Error", "Failed to create folder: " . $newFolderPath);
+    }
+}
+
+function createFile($targetDirectory, $fileName, $fileContent = '') {
+    if (empty($fileName)) {
+        showError("Create File Error", "File name cannot be empty");
+        return;
+    }
+    
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        showError("Create File Error", "Access denied or directory not writable: " . $targetDirectory);
+        return;
+    }
+    
+    $newFilePath = $targetDirectory . '/' . $fileName;
+    
+    if (file_exists($newFilePath)) {
+        showError("Create File Error", "File already exists: " . $newFilePath);
+        return;
+    }
+    
+    if (file_put_contents($newFilePath, $fileContent) !== false) {
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Create File Error", "Failed to create file: " . $newFilePath);
+    }
+}
+
+function saveFile($filePath, $content) {
+    if (!canAccessPath($filePath)) {
+        showError("Save File Error", "Access denied: " . $filePath);
+        return;
+    }
+    
+    if (file_put_contents($filePath, $content) !== false) {
+        echo "File saved successfully!";
+        $currentPath = dirname($filePath);
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Save File Error", "Failed to save file: " . $filePath);
+    }
+}
+
+function changePermissions($filePath, $permissions) {
+    if (!canAccessPath($filePath)) {
+        showError("Change Permissions Error", "Access denied: " . $filePath);
+        return;
+    }
+    
+    $permissions = octdec($permissions);
+    if (chmod($filePath, $permissions)) {
+        echo "Permissions changed successfully!";
+        $currentPath = dirname($filePath);
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Change Permissions Error", "Failed to change permissions for: " . $filePath);
+    }
+}
+
+function compressFiles($targetDirectory, $files, $archiveName) {
+    if (empty($files)) {
+        showError("Compress Error", "No files selected for compression");
+        return;
+    }
+    
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        showError("Compress Error", "Access denied or directory not writable: " . $targetDirectory);
+        return;
+    }
+    
+    if (empty($archiveName)) {
+        $archiveName = 'archive';
+    }
+    
+    $zip = new ZipArchive();
+    $zipFileName = $targetDirectory . '/' . $archiveName . '.zip';
+    
+    if ($zip->open($zipFileName, ZipArchive::CREATE) === TRUE) {
+        foreach ($files as $file) {
+            $filePath = $targetDirectory . '/' . $file;
+            if (file_exists($filePath)) {
+                if (is_dir($filePath)) {
+                    addDirectoryToZip($zip, $filePath, $file);
+                } else {
+                    $zip->addFile($filePath, $file);
+                }
+            }
+        }
+        
+        $zip->close();
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Compress Error", "Failed to create zip archive: " . $zipFileName);
+    }
+}
+
+function addDirectoryToZip($zip, $dirPath, $localPath) {
+    $zip->addEmptyDir($localPath);
+    $files = scandir($dirPath);
+    
+    foreach ($files as $file) {
+        if ($file != '.' && $file != '..') {
+            $filePath = $dirPath . '/' . $file;
+            $localFilePath = $localPath . '/' . $file;
+            
+            if (is_dir($filePath)) {
+                addDirectoryToZip($zip, $filePath, $localFilePath);
+            } else {
+                $zip->addFile($filePath, $localFilePath);
+            }
+        }
+    }
+}
+
+function extractFile($filePath) {
+    if (!canAccessPath($filePath)) {
+        showError("Extract Error", "Access denied: " . $filePath);
+        return;
+    }
+    
+    $zip = new ZipArchive();
+    
+    if ($zip->open($filePath) === TRUE) {
+        $extractPath = dirname($filePath);
+        $zip->extractTo($extractPath);
+        $zip->close();
+        $currentPath = getCurrentPath();
+        $relativePath = getRelativePath($currentPath);
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+    } else {
+        showError("Extract Error", "Failed to open zip archive: " . $filePath);
+    }
+}
+
+function copyToClipboard($filePath) {
+    if (!canAccessPath($filePath)) {
+        showError("Copy Error", "Access denied: " . $filePath);
+        return;
+    }
+    
+    $_SESSION['clipboard'] = [
+        'path' => $filePath,
+        'type' => is_dir($filePath) ? 'directory' : 'file'
+    ];
+    $currentPath = getCurrentPath();
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+}
+
+function pasteFromClipboard($targetDirectory) {
+    if (!isset($_SESSION['clipboard'])) {
+        showError("Paste Error", "Clipboard is empty");
+        return;
+    }
+    
+    if (!canAccessPath($targetDirectory) || !is_writable($targetDirectory)) {
+        showError("Paste Error", "Access denied or directory not writable: " . $targetDirectory);
+        return;
+    }
+    
+    $sourcePath = $_SESSION['clipboard']['path'];
+    $fileName = basename($sourcePath);
+    $destinationPath = $targetDirectory . '/' . $fileName;
+    
+    if (file_exists($destinationPath)) {
+        showError("Paste Error", "File/directory already exists in destination: " . $destinationPath);
+        return;
+    }
+    
+    if (is_dir($sourcePath)) {
+        if (recurseCopy($sourcePath, $destinationPath)) {
+            $currentPath = getCurrentPath();
+            $relativePath = getRelativePath($currentPath);
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+        } else {
+            showError("Paste Error", "Failed to copy directory from " . $sourcePath . " to " . $destinationPath);
+        }
+    } else {
+        if (copy($sourcePath, $destinationPath)) {
+            $currentPath = getCurrentPath();
+            $relativePath = getRelativePath($currentPath);
+            header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+        } else {
+            showError("Paste Error", "Failed to copy file from " . $sourcePath . " to " . $destinationPath);
+        }
+    }
+}
+
+function bulkDeleteFiles($files, $currentPath) {
+    if (empty($files)) {
+        showError("Bulk Delete Error", "No files selected for deletion");
+        return;
+    }
+    
+    if (!canAccessPath($currentPath)) {
+        showError("Bulk Delete Error", "Access denied: " . $currentPath);
+        return;
+    }
+    
+    $deletedCount = 0;
+    $errors = [];
+    
+    foreach ($files as $file) {
+        $filePath = $currentPath . '/' . $file;
+        if (file_exists($filePath) && canAccessPath($filePath)) {
+            if (is_dir($filePath)) {
+                if (deleteDirectory($filePath)) {
+                    $deletedCount++;
+                } else {
+                    $errors[] = "Failed to delete directory: " . $file;
+                }
+            } else {
+                if (unlink($filePath)) {
+                    $deletedCount++;
+                } else {
+                    $errors[] = "Failed to delete file: " . $file;
+                }
+            }
+        } else {
+            $errors[] = "File not found or access denied: " . $file;
+        }
+    }
+    
+    if (!empty($errors)) {
+        showError("Bulk Delete Errors", "Successfully deleted $deletedCount items, but encountered errors:\n" . implode("\n", $errors));
+        return;
+    }
+    
+    $_SESSION['message'] = "Successfully deleted $deletedCount items.";
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+}
+
+function bulkCopyFiles($files, $currentPath) {
+    if (empty($files)) {
+        showError("Bulk Copy Error", "No files selected for copying");
+        return;
+    }
+    
+    if (!canAccessPath($currentPath)) {
+        showError("Bulk Copy Error", "Access denied: " . $currentPath);
+        return;
+    }
+    
+    $_SESSION['bulk_clipboard'] = [];
+    foreach ($files as $file) {
+        $filePath = $currentPath . '/' . $file;
+        if (file_exists($filePath) && canAccessPath($filePath)) {
+            $_SESSION['bulk_clipboard'][] = [
+                'path' => $filePath,
+                'type' => is_dir($filePath) ? 'directory' : 'file',
+                'name' => $file
+            ];
+        }
+    }
+    
+    $_SESSION['message'] = "Copied " . count($_SESSION['bulk_clipboard']) . " items to clipboard.";
+    $relativePath = getRelativePath($currentPath);
+    header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
+}
+
+function deleteDirectory($dir) {
+    if (!is_dir($dir)) {
+        return unlink($dir);
+    }
+    
+    $files = array_diff(scandir($dir), array('.', '..'));
+    foreach ($files as $file) {
+        $filePath = $dir . '/' . $file;
+        if (is_dir($filePath)) {
+            deleteDirectory($filePath);
+        } else {
+            unlink($filePath);
+        }
+    }
+    
+    return rmdir($dir);
+}
+
+// ==================== TEMPLATE FUNCTIONS ====================
+function showLoginForm() {
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>File Manager - Login</title>
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/login.css'); ?>">
+    </head>
+    <body>
+        <div class="login-form">
+            <h2>🔐 Soyo File Manager</h2>
+            <form method="post">
+                <input type="password" name="password" placeholder="Enter password" required>
+                <button type="submit">Login</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    <?php
+}
+
+function showFileManager($currentPath, $relativePath) {
+    global $config;
+    
+    if (!canAccessPath($currentPath)) {
+        showError("Access Denied", "You don't have permission to access this directory: " . $currentPath);
+        return;
+    }
+    
+    $files = [];
+    if (is_readable($currentPath)) {
+        $files = scandir($currentPath);
+        $files = array_filter($files, function($file) use ($config) {
+            return $file !== '.' && ($config['show_hidden'] || $file[0] !== '.');
+        });
+    } else {
+        showError("Directory Not Readable", "Cannot read directory: " . $currentPath);
+        return;
+    }
+    
+    $sortBy = $_GET['sort'] ?? 'name';
+    $sortOrder = $_GET['order'] ?? 'asc';
+    
+    $files = sortFiles($files, $currentPath, $sortBy, $sortOrder);
+    
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>File Manager</title>
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/main.css'); ?>">
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/forms.css'); ?>">
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/file-list.css'); ?>">
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/dropdown.css'); ?>">
+    </head>
+    <body>
+        <div class="header">
+            <h1>📁 Soyo File Manager</h1>
+            <a href="?logout=1">🚪 Logout</a>
+        </div>
+        
+        <div class="breadcrumb">
+            <?php echo generateBreadcrumb($currentPath); ?>
+        </div>
+        
+        <div class="toolbar">
+            <button onclick="toggleUpload()">📤 Bulk Upload</button>
+            <button onclick="toggleFolder()">📁 Create Folder</button>
+            <button onclick="toggleCreateFile()">📄 Create File</button>
+            <button onclick="toggleCompress()" class="compress">📦 Compress Selected</button>
+        </div>
+
+        
+        <div id="upload-form" class="upload-form hidden">
+            <form method="post" enctype="multipart/form-data" action="?action=upload&path=<?php echo urlencode($relativePath); ?>">
+                <label>Select multiple files:</label>
+                <input type="file" name="files[]" multiple required>
+                <input type="submit" value="Upload All">
+                <button type="button" onclick="toggleUpload()" style="background: #6b7280; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; margin-left: 10px; font-size: 13px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500;">Cancel</button>
+            </form>
+        </div>
+        
+        <div id="folder-form" class="folder-form hidden">
+            <form method="post" action="?action=create_folder&path=<?php echo urlencode($relativePath); ?>">
+                <label>Create new folder:</label>
+                <input type="text" name="folder_name" placeholder="Folder name" required>
+                <input type="submit" value="Create">
+                <button type="button" onclick="toggleFolder()" style="background: #6b7280; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; margin-left: 10px; font-size: 13px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500;">Cancel</button>
+            </form>
+        </div>
+
+        <div id="create-file-form" class="upload-form hidden">
+            <form method="post" action="?action=create_file&path=<?php echo urlencode($relativePath); ?>">
+                <label>Create new file:</label>
+                <input type="text" name="file_name" placeholder="filename.ext (e.g., index.html, script.js)" required style="width: 300px;">
+                <br><br>
+                <label>File content (optional):</label>
+                <textarea name="file_content" placeholder="Enter initial file content..." style="width: 100%; height: 200px; margin-top: 10px; padding: 10px; border: 1px solid #4a4a5e; border-radius: 6px; background: #1e1e2e; color: #e0e0e0; font-family: monospace; font-size: 13px;"></textarea>
+                <br><br>
+                <input type="submit" value="Create File">
+                <button type="button" onclick="toggleCreateFile()" style="background: #6b7280; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; margin-left: 10px; font-size: 13px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500;">Cancel</button>
+            </form>
+        </div>
+        
+        <div id="compress-form" class="compress-form hidden">
+            <p>Compress Files:</p>
+            <p>Select files below using checkboxes, then click "Compress Selected Files" to create a ZIP archive.</p><br>
+            <button type="button" onclick="bulkCompress()" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500;">📦 Compress Selected Files</button>
+            <button type="button" onclick="toggleCompress()" style="background: #6b7280; color: white; border: none; padding: 10px 18px; border-radius: 6px; cursor: pointer; margin-left: 10px; font-size: 13px; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-weight: 500;">Cancel</button>
+        </div>
+        
+        <div id="bulk-actions" class="bulk-actions">
+            Bulk Actions:
+            <button onclick="bulkCompress()">📦 Compress Selected</button>
+        </div>
+
+        <?php if (isset($_SESSION['clipboard']) && !empty($_SESSION['clipboard'])): ?>
+        <div id="paste-actions" class="bulk-actions" style="background: #10b981; display: block;">
+            📋 Clipboard: <?php echo htmlspecialchars(basename($_SESSION['clipboard']['path'])); ?> (<?php echo $_SESSION['clipboard']['type']; ?>)
+            <button onclick="pasteItem()" style="background: #1e1e2e; color: #10b981;">📥 Paste Here</button>
+            <button onclick="clearClipboard()" style="background: #1e1e2e; color: #10b981;">🗑️ Clear Clipboard</button>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['bulk_clipboard']) && !empty($_SESSION['bulk_clipboard'])): ?>
+        <div id="bulk-paste-actions" class="bulk-actions" style="background: #059669; display: block;">
+            📋 Bulk Clipboard: <?php echo count($_SESSION['bulk_clipboard']); ?> items
+            <button onclick="bulkPaste()" style="background: #1e1e2e; color: #059669;">📥 Paste All Here</button>
+            <button onclick="clearBulkClipboard()" style="background: #1e1e2e; color: #059669;">🗑️ Clear Bulk Clipboard</button>
+        </div>
+        <?php endif; ?>
+
+        <?php if (isset($_SESSION['message'])): ?>
+        <div class="bulk-actions" style="background: #10b981; display: block;">
+            ✅ <?php echo htmlspecialchars($_SESSION['message']); ?>
+        </div>
+        <?php unset($_SESSION['message']); ?>
+        <?php endif; ?>
+        
+        <div class="file-list">
+            <div class="file-list-header">
+                <div class="file-checkbox">
+                    <input type="checkbox" id="select-all" onchange="selectAll()">
+                </div>
+                <div class="file-icon">Type</div>
+                <div class="file-name">
+                    <a href="?path=<?php echo urlencode($relativePath); ?>&sort=name&order=<?php echo ($sortBy === 'name' && $sortOrder === 'asc') ? 'desc' : 'asc'; ?>">
+                        Name <span class="sort-arrow"><?php if ($sortBy === 'name') echo $sortOrder === 'asc' ? '↑' : '↓'; ?></span>
+                    </a>
+                </div>
+                <div class="file-size">
+                    <a href="?path=<?php echo urlencode($relativePath); ?>&sort=size&order=<?php echo ($sortBy === 'size' && $sortOrder === 'asc') ? 'desc' : 'asc'; ?>">
+                        Size <span class="sort-arrow"><?php if ($sortBy === 'size') echo $sortOrder === 'asc' ? '↑' : '↓'; ?></span>
+                    </a>
+                </div>
+                <div class="file-date">
+                    <a href="?path=<?php echo urlencode($relativePath); ?>&sort=date&order=<?php echo ($sortBy === 'date' && $sortOrder === 'asc') ? 'desc' : 'asc'; ?>">
+                        Modified <span class="sort-arrow"><?php if ($sortBy === 'date') echo $sortOrder === 'asc' ? '↑' : '↓'; ?></span>
+                    </a>
+                </div>
+                <div class="file-permissions">Permissions</div>
+                <div class="file-actions">Actions</div>
+            </div>
+            
+            <?php 
+            $parentPath = dirname($currentPath);
+            if ($parentPath !== $currentPath && $parentPath !== '.' && canAccessPath($parentPath)): 
+                $relativeParentPath = getRelativePath($parentPath);
+            ?>
+            <div class="file-item folder">
+                <div class="file-checkbox"></div>
+                <div class="file-icon">📁</div>
+                <div class="file-name">
+                    <a href="?path=<?php echo urlencode($relativeParentPath); ?>" class="folder-name">.. (Parent Directory)</a>
+                </div>
+                <div class="file-size">-</div>
+                <div class="file-date">-</div>
+                <div class="file-permissions">-</div>
+                <div class="file-actions"></div>
+            </div>
+            <?php endif; ?>
+            
+            <?php foreach ($files as $index => $file): ?>
+                <?php
+                $fullFilePath = $currentPath . DIRECTORY_SEPARATOR . $file;
+                $isDir = is_dir($fullFilePath);
+                
+                $fileSize = '-';
+                $fileDate = '-';
+                $filePerms = '-';
+                
+                if (file_exists($fullFilePath)) {
+                    if (!$isDir) {
+                        $sizeInBytes = filesize($fullFilePath);
+                        $fileSize = $sizeInBytes !== false ? formatBytes($sizeInBytes) : 'Unknown';
+                    }
+                    
+                    $modTime = filemtime($fullFilePath);
+                    $fileDate = $modTime !== false ? date('Y-m-d H:i:s', $modTime) : 'Unknown';
+                    
+                    $perms = fileperms($fullFilePath);
+                    $filePerms = $perms !== false ? getFilePermissions($perms) : 'Unknown';
+                }
+                
+                $fileIcon = getFileIcon($file, $isDir);
+                $fileRelativePath = getRelativePath($fullFilePath);
+                $isZipFile = !$isDir && strtolower(pathinfo($file, PATHINFO_EXTENSION)) === 'zip';
+                $isEditable = !$isDir && isEditable($file);
+                $isViewable = !$isDir && isViewable($file);
+                $dropdownId = 'dropdown-' . $index;
+                ?>
+                <div class="file-item <?php echo $isDir ? 'folder' : 'file'; ?>">
+                    <div class="file-checkbox">
+                        <input type="checkbox" value="<?php echo htmlspecialchars($file); ?>" onchange="toggleBulkActions()">
+                    </div>
+                    <div class="file-icon"><?php echo $fileIcon; ?></div>
+                    <div class="file-name">
+                        <?php if ($isDir): ?>
+                            <a href="?path=<?php echo urlencode($fileRelativePath); ?>" class="folder-name"><?php echo htmlspecialchars($file); ?></a>
+                        <?php elseif ($isEditable): ?>
+                            <a href="?action=edit&path=<?php echo urlencode($fileRelativePath); ?>"><?php echo htmlspecialchars($file); ?></a>
+                        <?php elseif ($isViewable): ?>
+                            <a href="?action=view&path=<?php echo urlencode($fileRelativePath); ?> target="_blank"><?php echo htmlspecialchars($file); ?></a>
+                        <?php else: ?>
+                            <span><?php echo htmlspecialchars($file); ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="file-size"><?php echo $fileSize; ?></div>
+                    <div class="file-date"><?php echo $fileDate; ?></div>
+                    <div class="file-permissions"><?php echo $filePerms; ?></div>
+                    <div class="file-actions">
+                        <div class="dropdown" id="<?php echo $dropdownId; ?>">
+                            <button class="dropdown-btn" onclick="toggleDropdown(event, '<?php echo $dropdownId; ?>')">⋮</button>
+                            <div class="dropdown-content">
+                                <?php if ($isZipFile): ?>
+                                    <a href="?action=extract&path=<?php echo urlencode($fileRelativePath); ?>" onclick="return confirm('Extract <?php echo htmlspecialchars($file); ?>?')" class="warning">📦 Extract</a>
+                                <?php endif; ?>
+                                <?php if ($isEditable): ?>
+                                    <a href="?action=edit&path=<?php echo urlencode($fileRelativePath); ?>">✏️ Edit</a>
+                                <?php endif; ?>
+                                <?php if (!$isDir): ?>
+                                    <a href="?action=download&path=<?php echo urlencode($fileRelativePath); ?>" class="success">⬇️ Download</a>
+                                <?php endif; ?>
+                                <a href="?action=copy&path=<?php echo urlencode($fileRelativePath); ?>" class="success">📋 Copy</a>
+                                <a href="?action=edit_permissions&path=<?php echo urlencode($fileRelativePath); ?>">🔒 Permissions</a>
+                                <a href="?action=delete&path=<?php echo urlencode($fileRelativePath); ?>" 
+                                   onclick="return confirmDelete('<?php echo htmlspecialchars($file); ?>')" class="danger">🗑️ Delete</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+        
+        <div class="footer-info">
+            <p>Current Directory: <?php echo htmlspecialchars($currentPath); ?></p>
+            <p>Total Items: <?php echo count($files); ?> | 
+               Sorted by: <?php echo ucfirst($sortBy); ?> (<?php echo $sortOrder; ?>)</p>
+        </div>
+        
+        <script src="<?php echo getAssetUrl('assets/js/main.js'); ?>"></script>
+    </body>
+    </html>
+    <?php
+}
+
+function showEditor($filePath) {
+    if (!canAccessPath($filePath)) {
+        showError("Editor Access Denied", "You don't have permission to access this file: " . $filePath);
+        return;
+    }
+    
+    $content = file_get_contents($filePath);
+    if ($content === false) {
+        showError("Editor Error", "Cannot read file: " . $filePath);
+        return;
+    }
+    
+    $fileName = basename($filePath);
+    $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+    
+    $language = getLanguageFromExtension($extension);
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Edit: <?php echo htmlspecialchars($fileName); ?></title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/editor.css'); ?>">
+    </head>
+    <body>
+        <div class="editor-header">
+            <div>
+                <h2>📝 Editing: <?php echo htmlspecialchars($fileName); ?></h2>
+                <small>File path: <?php echo htmlspecialchars($filePath); ?></small>
+            </div>
+            <div class="editor-actions">
+                <div class="editor-info">
+                    Language: <strong><?php echo ucfirst($language); ?></strong> | 
+                    Size: <strong><?php echo formatBytes(strlen($content)); ?></strong>
+                </div>
+                <button type="button" class="save-btn" onclick="saveFile()">💾 Save</button>
+                <button type="button" class="cancel-btn" onclick="history.back()">❌ Cancel</button>
+            </div>
+        </div>
+        
+        <div class="editor-container">
+            <div id="loading" class="loading">
+                🔄 Loading Monaco Editor...
+            </div>
+            <div id="monaco-editor" style="display: none;"></div>
+        </div>
+        
+        <div class="editor-footer">
+            <div class="editor-status">
+                <span id="cursor-position">Line 1, Column 1</span>
+                <span id="selection-info"></span>
+                <span id="error-count">No errors</span>
+            </div>
+            <div class="editor-status">
+                <span>Encoding: UTF-8</span>
+                <span>EOL: LF</span>
+            </div>
+        </div>
+
+        <form id="save-form" method="post" style="display: none;">
+            <input type="hidden" name="content" id="content-input">
+        </form>
+
+        <script src="<?php echo getAssetUrl('assets/js/editor.js'); ?>"></script>
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {
+                initializeEditor(<?php echo json_encode($content); ?>, '<?php echo $language; ?>');
+            });
+        </script>
+    </body>
+    </html>
+    <?php
+}
+
+function showPermissionEditor($filePath) {
+    if (!canAccessPath($filePath)) {
+        showError("Permission Editor Access Denied", "You don't have permission to access this file: " . $filePath);
+        return;
+    }
+    
+    $currentPermissions = substr(sprintf('%o', fileperms($filePath)), -4);
+    $fileName = basename($filePath);
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Edit Permissions: <?php echo htmlspecialchars($fileName); ?> - Soyo File Manager</title>
+        <link rel="stylesheet" href="<?php echo getAssetUrl('assets/css/forms.css'); ?>">
+    </head>
+    <body class="permissions-form">
+        <h1>Edit Permissions: <?php echo htmlspecialchars(basename($filePath)); ?></h1>
+        <form method="post">
+            <input type="text" name="permissions" value="<?php echo $currentPermissions; ?>" placeholder="e.g., 0777">
+            <input type="submit" value="Change Permissions">
+        </form>
+    </body>
+    </html>
+    <?php
+}
+
+// ==================== MAIN EXECUTION ====================
 
 // Authentication
 if (!isset($_SESSION['authenticated'])) {
@@ -37,121 +1304,83 @@ if (isset($_GET['logout'])) {
     exit;
 }
 
-// Handle actions
+// Handle actions with enhanced path handling
 $action = $_GET['action'] ?? '';
-$path = $_GET['path'] ?? '';
+$currentPath = getCurrentPath();
+$relativePath = getRelativePath($currentPath);
 
-// Enhanced path handling - allow going up but start from current directory
-if (empty($path)) {
-    $fullPath = $config['root_path'];
-} else {
-    // Allow absolute paths for better navigation
-    if (strpos($path, '/') === 0) {
-        // Absolute path - use as is if it exists and is accessible
-        $fullPath = realpath($path);
-        if (!$fullPath || !is_dir($fullPath) || !is_readable($fullPath)) {
-            $fullPath = $config['root_path'];
-            $path = '';
-        }
-    } else {
-        // Relative path from current root
-        $fullPath = realpath($config['root_path'] . '/' . $path);
-        if (!$fullPath || !is_dir($fullPath)) {
-            $fullPath = $config['root_path'];
-            $path = '';
-        }
+// Get file path for file-specific actions
+$filePath = $currentPath;
+if ($action !== '' && isset($_GET['path'])) {
+    try {
+        $filePath = $pathManager->resolveRequestedPath($_GET['path']);
+    } catch (Exception $e) {
+        showError("File Path Resolution Error", $e->getMessage());
+        exit;
     }
 }
 
 switch ($action) {
     case 'view':
-        viewFile($fullPath);
+        viewFile($filePath);
         break;
     case 'download':
-        downloadFile($fullPath);
+        downloadFile($filePath);
         break;
     case 'delete':
-        deleteFile($fullPath);
+        deleteFile($filePath);
         break;
     case 'upload':
-        uploadFiles($fullPath);
+        uploadFiles($currentPath);
         break;
     case 'create_folder':
-        createFolder($fullPath, $_POST['folder_name'] ?? '');
+        createFolder($currentPath, $_POST['folder_name'] ?? '');
         break;
     case 'edit':
         if ($_POST) {
-            saveFile($fullPath, $_POST['content']);
+            saveFile($filePath, $_POST['content']);
         } else {
-            showEditor($fullPath);
+            showEditor($filePath);
             exit;
         }
         break;
     case 'edit_permissions':
         if ($_POST) {
-            changePermissions($fullPath, $_POST['permissions']);
+            changePermissions($filePath, $_POST['permissions']);
         } else {
-            showPermissionEditor($fullPath);
+            showPermissionEditor($filePath);
             exit;
         }
         break;
     case 'compress':
-        compressFiles($fullPath, $_POST['files'] ?? [], $_POST['archive_name'] ?? '');
+        compressFiles($currentPath, $_POST['files'] ?? [], $_POST['archive_name'] ?? '');
         break;
     case 'extract':
-        extractFile($fullPath);
+        extractFile($filePath);
         break;
     case 'create_file':
         if ($_POST) {
-            createFile($fullPath, $_POST['file_name'] ?? '', $_POST['file_content'] ?? '');
-        } else {
-            showFileCreator($fullPath);
-            exit;
+            createFile($currentPath, $_POST['file_name'] ?? '', $_POST['file_content'] ?? '');
         }
         break;
     case 'copy':
-        copyToClipboard($fullPath);
+        copyToClipboard($filePath);
         break;
     case 'paste':
-        pasteFromClipboard($fullPath);
-        break;
-    case 'search':
-        showSearchResults();
-        exit;
+        pasteFromClipboard($currentPath);
         break;
     case 'bulk_delete':
-        bulkDeleteFiles($_POST['files'] ?? [], $fullPath);
+        bulkDeleteFiles($_POST['files'] ?? [], $currentPath);
         break;
     case 'bulk_copy':
-        bulkCopyFiles($_POST['files'] ?? [], $fullPath);
-        break;
-    case 'bulk_delete_search':
-        bulkDeleteSearchResults($_POST['files'] ?? []);
-        break;
-    case 'debug_search':
-        debugSearch();
-        exit;
-        break;
-    case 'generate_hash':
-        if (isset($_POST['new_password'])) {
-            echo '<pre>New password hash: ' . generatePasswordHash($_POST['new_password']) . '</pre>';
-            exit;
-        }
+        bulkCopyFiles($_POST['files'] ?? [], $currentPath);
         break;
     case 'clear_clipboard':
         unset($_SESSION['clipboard']);
-        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($_GET['path']));
-        break;
-    case 'terminal':
-        runTerminalCommand($fullPath);
-        exit;
-        break;
-    case 'get_folders':
-        getFolderList();
-        exit;
+        header('Location: ' . $_SERVER['PHP_SELF'] . '?path=' . urlencode($relativePath));
         break;
 }
 
 // Main interface
-showFileManager($fullPath, $path);
+showFileManager($currentPath, $relativePath);
 ?>
