@@ -78,24 +78,32 @@ class PathManager {
             return $resolvedPath;
         }
         
-        // Handle relative paths - try sibling directory first, then subdirectory
+        // Handle relative paths - try sibling directory first, then subdirectory, then files
         $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
         $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
-        
-        // Priority: sibling directory first
+
+        // Priority 1: sibling directory
         if ($possibleSibling && is_dir($possibleSibling) && $possibleSibling !== $uploadPath) {
             if (!$this->canAccessPath($possibleSibling)) {
                 throw new Exception("Access denied to sibling directory: " . $requestedPath . " (resolved: " . $possibleSibling . ")");
             }
             return $possibleSibling;
         }
-        
-        // Then try relative path within upload directory
-        if ($possibleRelative && is_dir($possibleRelative)) {
+
+        // Priority 2: relative path within upload directory (file or directory)
+        if ($possibleRelative && file_exists($possibleRelative)) {
             if (!$this->canAccessPath($possibleRelative)) {
                 throw new Exception("Access denied to relative path: " . $requestedPath . " (resolved: " . $possibleRelative . ")");
             }
             return $possibleRelative;
+        }
+
+        // Priority 3: sibling file (if it's a file, not directory)
+        if ($possibleSibling && is_file($possibleSibling)) {
+            if (!$this->canAccessPath($possibleSibling)) {
+                throw new Exception("Access denied to sibling file: " . $requestedPath . " (resolved: " . $possibleSibling . ")");
+            }
+            return $possibleSibling;
         }
         
         // If neither exists, provide detailed error
@@ -581,7 +589,7 @@ function uploadFiles($targetDirectory) {
     
     $files = $_FILES['files'];
     
-    for ($i = 0; $i < count($files['name']); $i++) {
+    for ($i = 0;i < count($files['name']);$i++) {
         $fileName = $files['name'][$i];
         $fileTmpName = $files['tmp_name'][$i];
         $fileSize = $files['size'][$i];
