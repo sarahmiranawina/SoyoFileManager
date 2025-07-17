@@ -141,9 +141,21 @@ function pasteItem() {
   }
 }
 
+function bulkPaste() {
+  if (confirm("Paste all items from bulk clipboard to current directory?")) {
+    window.location.href = "?action=bulk_paste&path=" + encodeURIComponent(getPathFromUrl())
+  }
+}
+
 function clearClipboard() {
   if (confirm("Clear clipboard?")) {
     window.location.href = "?action=clear_clipboard&path=" + encodeURIComponent(getPathFromUrl())
+  }
+}
+
+function clearBulkClipboard() {
+  if (confirm("Clear bulk clipboard?")) {
+    window.location.href = "?action=clear_bulk_clipboard&path=" + encodeURIComponent(getPathFromUrl())
   }
 }
 
@@ -151,9 +163,6 @@ function getPathFromUrl() {
   const urlParams = new URLSearchParams(window.location.search)
   return urlParams.get("path") || ""
 }
-
-// Enhanced search with folder selection
-const selectedSearchFolder = ""
 
 // Dropdown functionality
 function toggleDropdown(event, dropdownId) {
@@ -178,5 +187,7 @@ document.addEventListener("click", () => {
   })
 })
 
-// Initialize folder selection
-document.addEventListener("DOMContentLoaded", () => {})
+// Initialize on page load
+document.addEventListener("DOMContentLoaded", () => {
+  // Any initialization code can go here
+})
