@@ -36,7 +36,7 @@ function generatePasswordHash($password) {
     return password_hash($password, PASSWORD_DEFAULT);
 }
 
-// ==================== PATH FUNCTIONS - COMPLETELY REFACTORED ====================
+// ==================== PATH FUNCTIONS - REFACTORED ====================
 class PathManager {
     private $config;
     
@@ -45,7 +45,7 @@ class PathManager {
     }
     
     /**
-     * Resolve requested path to absolute path with comprehensive error handling
+     * Resolve requested path to absolute path with proper error handling
      */
     public function resolveRequestedPath($requestedPath = null) {
         // If no path requested, return upload_path as default
@@ -62,51 +62,46 @@ class PathManager {
             throw new Exception("Upload path does not exist: " . $this->config['upload_path']);
         }
         
+        $uploadParent = dirname($uploadPath);
+        
         // Handle absolute paths (starting with /)
         if (strpos($requestedPath, '/') === 0) {
             $resolvedPath = realpath($requestedPath);
-            if (!$resolvedPath || !file_exists($resolvedPath)) {
+            if (!$resolvedPath) {
                 throw new Exception("Absolute path does not exist: " . $requestedPath);
             }
             
             if (!$this->canAccessPath($resolvedPath)) {
-                throw new Exception("Access denied to absolute path: " . $requestedPath);
+                throw new Exception("Access denied to absolute path: " . $requestedPath . " (resolved: " . $resolvedPath . ")");
             }
             
             return $resolvedPath;
         }
         
-        // Handle relative paths - comprehensive approach
-        $uploadParent = dirname($uploadPath);
+        // Handle relative paths - try sibling directory first, then subdirectory
+        $possibleSibling = realpath($uploadParent . '/' . $requestedPath);
+        $possibleRelative = realpath($uploadPath . '/' . $requestedPath);
         
-        // Try different path combinations in order of priority
-        $pathsToTry = [
-            // 1. Direct relative path within upload directory
-            $uploadPath . '/' . $requestedPath,
-            // 2. Sibling directory/file (same level as upload directory)
-            $uploadParent . '/' . $requestedPath,
-            // 3. Try with different separators (Windows compatibility)
-            $uploadPath . '/' . str_replace('\\', '/', $requestedPath),
-            $uploadParent . '/' . str_replace('\\', '/', $requestedPath),
-        ];
-        
-        foreach ($pathsToTry as $tryPath) {
-            $resolvedPath = realpath($tryPath);
-            if ($resolvedPath && file_exists($resolvedPath)) {
-                if (!$this->canAccessPath($resolvedPath)) {
-                    throw new Exception("Access denied to path: " . $requestedPath . " (resolved: " . $resolvedPath . ")");
-                }
-                return $resolvedPath;
+        // Priority: sibling directory first
+        if ($possibleSibling && is_dir($possibleSibling) && $possibleSibling !== $uploadPath) {
+            if (!$this->canAccessPath($possibleSibling)) {
+                throw new Exception("Access denied to sibling directory: " . $requestedPath . " (resolved: " . $possibleSibling . ")");
             }
+            return $possibleSibling;
         }
         
-        // If no path found, provide detailed error
-        $errorMsg = "Path not found: " . $requestedPath . "\n";
-        $errorMsg .= "Upload directory: " . $uploadPath . "\n";
-        $errorMsg .= "Tried paths:\n";
-        foreach ($pathsToTry as $i => $tryPath) {
-            $errorMsg .= "  " . ($i + 1) . ". " . $tryPath . " - " . (file_exists($tryPath) ? "exists" : "does not exist") . "\n";
+        // Then try relative path within upload directory
+        if ($possibleRelative && is_dir($possibleRelative)) {
+            if (!$this->canAccessPath($possibleRelative)) {
+                throw new Exception("Access denied to relative path: " . $requestedPath . " (resolved: " . $possibleRelative . ")");
+            }
+            return $possibleRelative;
         }
+        
+        // If neither exists, provide detailed error
+        $errorMsg = "Path not found: " . $requestedPath . "\n";
+        $errorMsg .= "Tried sibling: " . ($uploadParent . '/' . $requestedPath) . " - " . ($possibleSibling ? "exists but not directory" : "does not exist") . "\n";
+        $errorMsg .= "Tried relative: " . ($uploadPath . '/' . $requestedPath) . " - " . ($possibleRelative ? "exists but not directory" : "does not exist");
         
         throw new Exception($errorMsg);
     }
@@ -127,19 +122,18 @@ class PathManager {
             return '';
         }
         
+        // If path is sibling of upload_path
+        if (dirname($absolutePath) === $uploadParent && $absolutePath !== $uploadPath) {
+            return basename($absolutePath);
+        }
+        
         // If path is within upload_path, return relative path
-        if (strpos($absolutePath, $uploadPath . '/') === 0) {
-            $relativePath = substr($absolutePath, strlen($uploadPath) + 1);
-            return $relativePath;
+        if (strpos($absolutePath, $uploadPath) === 0) {
+            $relativePath = substr($absolutePath, strlen($uploadPath));
+            return trim($relativePath, '/\\');
         }
         
-        // If path is sibling of upload_path (same parent directory)
-        if (strpos($absolutePath, $uploadParent . '/') === 0 && $absolutePath !== $uploadPath) {
-            $relativePath = substr($absolutePath, strlen($uploadParent) + 1);
-            return $relativePath;
-        }
-        
-        // If path is outside both, return absolute path
+        // If path is outside upload_path, return absolute path
         return $absolutePath;
     }
     
@@ -157,12 +151,11 @@ class PathManager {
             throw new Exception("Root path does not exist: " . $this->config['root_path']);
         }
         
-        // Allow access if path is within root path
         return strpos($realPath, $rootPath) === 0;
     }
     
     /**
-     * Generate breadcrumb navigation with improved logic
+     * Generate breadcrumb navigation
      */
     public function generateBreadcrumb($currentPath) {
         $uploadPath = realpath($this->config['upload_path']);
@@ -181,31 +174,27 @@ class PathManager {
         }
         
         // If within upload path, show relative breadcrumb
-        if (strpos($currentPath, $uploadPath . '/') === 0) {
-            $relativePath = substr($currentPath, strlen($uploadPath) + 1);
-            $pathParts = explode('/', $relativePath);
+        if (strpos($currentPath, $uploadPath) === 0) {
+            $relativePath = substr($currentPath, strlen($uploadPath));
+            $pathParts = explode('/', trim($relativePath, '/'));
             $pathParts = array_filter($pathParts);
             
             $buildPath = '';
             foreach ($pathParts as $part) {
-                $buildPath .= ($buildPath ? '/' : '') . $part;
-                $encodedPath = urlencode($buildPath);
+                $buildPath .= '/' . $part;
+                $encodedPath = urlencode(trim($buildPath, '/'));
                 $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
             }
         } else {
             // If outside upload path, show absolute breadcrumb
-            $uploadParent = dirname($uploadPath);
-            if (strpos($currentPath, $uploadParent . '/') === 0) {
-                $relativePath = substr($currentPath, strlen($uploadParent) + 1);
-                $pathParts = explode('/', $relativePath);
-                $pathParts = array_filter($pathParts);
-                
-                $buildPath = '';
-                foreach ($pathParts as $part) {
-                    $buildPath .= ($buildPath ? '/' : '') . $part;
-                    $encodedPath = urlencode($buildPath);
-                    $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
-                }
+            $pathParts = explode('/', trim($currentPath, '/'));
+            $pathParts = array_filter($pathParts);
+            
+            $buildPath = '';
+            foreach ($pathParts as $part) {
+                $buildPath .= '/' . $part;
+                $encodedPath = urlencode($buildPath);
+                $breadcrumb .= ' / <a href="?path=' . $encodedPath . '">' . htmlspecialchars($part) . '</a>';
             }
         }
         
@@ -216,36 +205,16 @@ class PathManager {
         
         return $breadcrumb;
     }
-    
-    /**
-     * Validate and normalize path for security
-     */
-    public function validatePath($path) {
-        // Remove any dangerous characters
-        $path = str_replace(['../', '..\\', '\\'], '', $path);
-        
-        // Normalize slashes
-        $path = str_replace('\\', '/', $path);
-        
-        // Remove multiple consecutive slashes
-        $path = preg_replace('/\/+/', '/', $path);
-        
-        // Remove leading/trailing slashes for relative paths
-        $path = trim($path, '/');
-        
-        return $path;
-    }
 }
 
-// Wrapper functions for backward compatibility with improved error handling
+// Initialize path manager
+$pathManager = new PathManager($config);
+
+// Wrapper functions for backward compatibility
 function getCurrentPath() {
     global $pathManager;
     try {
-        $requestedPath = $_GET['path'] ?? '';
-        if ($requestedPath) {
-            $requestedPath = $pathManager->validatePath($requestedPath);
-        }
-        return $pathManager->resolveRequestedPath($requestedPath);
+        return $pathManager->resolveRequestedPath($_GET['path'] ?? '');
     } catch (Exception $e) {
         showError("Path Resolution Error", $e->getMessage());
         exit;
@@ -612,7 +581,7 @@ function uploadFiles($targetDirectory) {
     
     $files = $_FILES['files'];
     
-    for ($i = 0;i < count($files['name']);$i++) {
+    for ($i = 0; $i < count($files['name']); $i++) {
         $fileName = $files['name'][$i];
         $fileTmpName = $files['tmp_name'][$i];
         $fileSize = $files['size'][$i];
@@ -1337,42 +1306,17 @@ if (isset($_GET['logout'])) {
 
 // Handle actions with enhanced path handling
 $action = $_GET['action'] ?? '';
-
-// Get current directory path
 $currentPath = getCurrentPath();
 $relativePath = getRelativePath($currentPath);
 
-// For file-specific actions, resolve the specific file path
+// Get file path for file-specific actions
 $filePath = $currentPath;
 if ($action !== '' && isset($_GET['path'])) {
     try {
-        $requestedPath = $pathManager->validatePath($_GET['path']);
-        $filePath = $pathManager->resolveRequestedPath($requestedPath);
+        $filePath = $pathManager->resolveRequestedPath($_GET['path']);
     } catch (Exception $e) {
         showError("File Path Resolution Error", $e->getMessage());
         exit;
-    }
-}
-
-// Special handling for directory-based actions
-$targetDirectory = $currentPath;
-if (in_array($action, ['upload', 'create_folder', 'create_file', 'compress', 'bulk_delete', 'bulk_copy', 'paste'])) {
-    // For these actions, we need the directory, not the file
-    if (isset($_GET['path']) && !empty($_GET['path'])) {
-        try {
-            $requestedPath = $pathManager->validatePath($_GET['path']);
-            $resolvedPath = $pathManager->resolveRequestedPath($requestedPath);
-            
-            // If resolved path is a file, use its directory
-            if (is_file($resolvedPath)) {
-                $targetDirectory = dirname($resolvedPath);
-            } else {
-                $targetDirectory = $resolvedPath;
-            }
-        } catch (Exception $e) {
-            // If path resolution fails, use current path
-            $targetDirectory = $currentPath;
-        }
     }
 }
 
@@ -1387,10 +1331,10 @@ switch ($action) {
         deleteFile($filePath);
         break;
     case 'upload':
-        uploadFiles($targetDirectory);
+        uploadFiles($currentPath);
         break;
     case 'create_folder':
-        createFolder($targetDirectory, $_POST['folder_name'] ?? '');
+        createFolder($currentPath, $_POST['folder_name'] ?? '');
         break;
     case 'edit':
         if ($_POST) {
@@ -1409,27 +1353,27 @@ switch ($action) {
         }
         break;
     case 'compress':
-        compressFiles($targetDirectory, $_POST['files'] ?? [], $_POST['archive_name'] ?? '');
+        compressFiles($currentPath, $_POST['files'] ?? [], $_POST['archive_name'] ?? '');
         break;
     case 'extract':
         extractFile($filePath);
         break;
     case 'create_file':
         if ($_POST) {
-            createFile($targetDirectory, $_POST['file_name'] ?? '', $_POST['file_content'] ?? '');
+            createFile($currentPath, $_POST['file_name'] ?? '', $_POST['file_content'] ?? '');
         }
         break;
     case 'copy':
         copyToClipboard($filePath);
         break;
     case 'paste':
-        pasteFromClipboard($targetDirectory);
+        pasteFromClipboard($currentPath);
         break;
     case 'bulk_delete':
-        bulkDeleteFiles($_POST['files'] ?? [], $targetDirectory);
+        bulkDeleteFiles($_POST['files'] ?? [], $currentPath);
         break;
     case 'bulk_copy':
-        bulkCopyFiles($_POST['files'] ?? [], $targetDirectory);
+        bulkCopyFiles($_POST['files'] ?? [], $currentPath);
         break;
     case 'clear_clipboard':
         unset($_SESSION['clipboard']);
